@@ -1,0 +1,4 @@
+interface:
+  display_name: "CV Solution Architect"
+  short_description: "Giải thích giải pháp CV và siêu tham số theo năm phần"
+  default_prompt: "Dùng $cv-solution-architect để viết huong_giai_quyet.md giải thích bài toán, dữ liệu/hướng tiếp cận, tiền xử lý, mô hình và siêu tham số có cơ sở."

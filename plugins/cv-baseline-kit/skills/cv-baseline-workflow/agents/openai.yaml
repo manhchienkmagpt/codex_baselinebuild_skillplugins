@@ -1,0 +1,4 @@
+interface:
+  display_name: "CV Baseline Workflow"
+  short_description: "Baseline CV tối ưu, basic và hardcore cho ảnh/video"
+  default_prompt: "Dùng $cv-baseline-workflow với bài toán ảnh/video tôi gửi để tạo các đầu ra tiếng Việt theo ba mức baseline."

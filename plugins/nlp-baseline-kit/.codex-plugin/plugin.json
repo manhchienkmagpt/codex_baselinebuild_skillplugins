@@ -1,0 +1,20 @@
+{
+  "name": "nlp-baseline-kit",
+  "version": "1.2.3",
+  "description": "Vietnamese NLP optimized/basic/hardcore notebooks and a five-part learner-focused optimized solution report.",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "NLP Baseline Kit",
+    "shortDescription": "Ba mức baseline NLP: tối ưu, basic và hardcore",
+    "longDescription": "Tạo ba notebook độc lập và báo cáo tiếng Việt tập trung năm phần: hiểu bài toán, phân tích dữ liệu/hướng tiếp cận, tiền xử lý tối ưu, chọn mô hình, siêu tham số và lý do. Phân biệt cấu hình đề xuất với tốt nhất đã đo trên validation; không thêm lịch sử kiểm thử hoặc chương vận hành dài. Giữ cấu hình cố định, mục tiêu GPU 32 GB và checkpoint inference gọn. Fewshot mới tuyển chọn từ tám nhóm outputs, mỗi nhóm có optimized/basic/hardcore và báo cáo năm phần.",
+    "developerName": "CHIEN",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Dùng $nlp-baseline-workflow để tạo ba notebook và huong_giai_quyet.md tập trung giải thích bài toán, dữ liệu/hướng tiếp cận, tiền xử lý, mô hình và siêu tham số tối ưu có cơ sở."
+    ]
+  }
+}

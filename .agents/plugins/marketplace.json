@@ -1,0 +1,32 @@
+{
+  "name": "olympic-ai-nlp",
+  "interface": {
+    "displayName": "Olympic AI NLP"
+  },
+  "plugins": [
+    {
+      "name": "nlp-baseline-kit",
+      "source": {
+        "source": "local",
+        "path": "./plugins/nlp-baseline-kit"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    },
+    {
+      "name": "cv-baseline-kit",
+      "source": {
+        "source": "local",
+        "path": "./plugins/cv-baseline-kit"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

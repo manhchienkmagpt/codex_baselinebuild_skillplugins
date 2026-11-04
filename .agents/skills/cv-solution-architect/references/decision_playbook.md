@@ -1,0 +1,5 @@
+# CV method decisions
+
+Use the [task guide](../../cv-baseline-workflow/references/cv_tasks.md) for candidates, geometry, temporal handling and official metrics. Data size, task constraints and validation evidence outrank architecture names. Optimized may use [eligible backbones](../../cv-baseline-workflow/references/pretraining_policy.md), never complete pretrained task solutions; basic/hardcore are scratch.
+
+Compare 2–4 feasible candidates, choose one optimized and one substantially simpler basic architecture, and one untrained hardcore raw-input model. Basic has minimal conversion but full task-correct training/evaluation. Do not force CNN classification onto structured detection/tracking outputs. Separate data preprocessing, architecture, training schedule and decoding/association upgrades so the learner can measure each on validation. Use fixed settings for a 32 GB GPU target; no AMP/hardware adaptation or guaranteed score gaps. See the [fewshot guide](../../cv-notebook-engineer/references/fewshot_guide.md) for actual example coverage.

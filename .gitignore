@@ -1,0 +1,30 @@
+# Ket qua sinh ra khi giai bai va chay notebook.
+/outputs/
+/artifacts/
+
+# Ban sao fewshot de tham khao tai may; plugin da dong goi mau rieng.
+# Chi ignore thu muc goc, giu assets/fewshot ben trong skill/plugin.
+/fewshot/
+
+# Moi truong Python va cache co the tao lai.
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Workspace kiem thu va tai nguyen tam cua cac lan chinh sua.
+/.work_*/
+/.validator-test-*/
+*.log
+
+# Cau hinh may ca nhan va tep he dieu hanh.
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db
+desktop.ini
