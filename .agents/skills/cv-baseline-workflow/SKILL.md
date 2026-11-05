@@ -6,7 +6,7 @@ description: Build optimized, minimal-preprocessing basic and inference-only har
 # CV Baseline Workflow
 
 
-Resolve dataset/version, sample schema, labels, task metric and image/video/sequence split unit. Default outputs/cv/<task_slug>/ contains baseline.ipynb, baseline_basic.ipynb, baseline_hardcore.ipynb and huong_giai_quyet.md. Respect report-only/notebook-only/selected-variant requests.
+Resolve dataset/version, sample schema, labels, task metric and image/video/sequence split unit. Default `outputs/cv/<STT>_<Tên bài toán>/` contains baseline.ipynb, baseline_basic.ipynb, baseline_hardcore.ipynb and huong_giai_quyet.md. Apply the [output naming convention](references/output_naming.md), even in a new chat without a naming request: preserve supplied STT; otherwise reuse a matching task directory or allocate the next available number. Explicit user paths take precedence. Respect report-only/notebook-only/selected-variant requests.
 
 Optimized uses strong task-specific preprocessing and a self-built task model, optionally with an eligible pretrained backbone. Basic uses only minimal task-correct image/video conversion and a simpler scratch model with full training/evaluation. Hardcore loads raw data, defines one untrained scratch model and directly infers, with mechanical conversion inside the model only. Preserve existing optimized content during companion updates.
 

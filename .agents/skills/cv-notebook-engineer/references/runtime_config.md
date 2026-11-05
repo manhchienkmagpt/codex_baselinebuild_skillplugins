@@ -18,7 +18,7 @@ import numpy as np
 import torch
 
 DATA_DIR = Path("data")
-OUTPUT_DIR = Path("outputs/task_slug/artifacts/optimized")
+OUTPUT_DIR = Path("artifacts/task_slug/optimized")
 BATCH_SIZE = 32
 EPOCHS = 30
 LEARNING_RATE = 1e-3

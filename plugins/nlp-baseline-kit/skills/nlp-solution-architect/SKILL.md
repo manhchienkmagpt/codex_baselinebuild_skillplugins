@@ -7,6 +7,8 @@ description: Analyze NLP and language-related multimodal tasks and write a learn
 
 Write huong_giai_quyet.md in Vietnamese for a learner. Follow the [five-part report contract](references/report_contract.md). Architect-only invocation creates only the report; do not claim implementation or training that did not happen.
 
+Apply the [output naming convention](../nlp-baseline-workflow/references/output_naming.md): default `outputs/<STT>_<Tên bài toán>/`, preserve explicit STT or reuse/allocate the task number even in a fresh chat. Explicit user paths take precedence.
+
 ## Required references
 
 Read the [decision playbook](references/decision_playbook.md), [pretraining policy](../nlp-baseline-workflow/references/pretraining_policy.md) and [fixed runtime settings](../nlp-notebook-engineer/references/runtime_config.md). Spreadsheet input follows the [Excel contract](../nlp-baseline-workflow/references/excel_input_contract.md). The [three-variant notebook contract](../nlp-baseline-workflow/references/dual_notebook_contract.md) still applies when notebooks are requested, but does not impose three-way report chapters. Use relevant [fewshot sources](../nlp-notebook-engineer/references/fewshot_guide.md) to understand methods when helpful, not as report-layout requirements.

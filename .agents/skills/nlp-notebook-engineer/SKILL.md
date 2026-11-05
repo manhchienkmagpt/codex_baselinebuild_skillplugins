@@ -7,6 +7,8 @@ description: Generate or repair Vietnamese NLP/image-to-text notebooks in optimi
 
 Create baseline.ipynb, baseline_basic.ipynb and baseline_hardcore.ipynb, unless the request selects fewer variants. Every notebook runs independently from a fresh kernel. Notebook-only requests do not require a new proposal. Use Vietnamese headings, comments and logs.
 
+Apply the [output naming convention](../nlp-baseline-workflow/references/output_naming.md): default `outputs/<STT>_<Tên bài toán>/`, preserve explicit STT or reuse/allocate the task number even in a fresh chat. Explicit user paths take precedence.
+
 Read the [three-variant contract](../nlp-baseline-workflow/references/dual_notebook_contract.md), [notebook contract](references/notebook_contract.md), [runtime settings](references/runtime_config.md), [pretraining policy](../nlp-baseline-workflow/references/pretraining_policy.md) and [hardcore contract](../nlp-baseline-workflow/references/hardcore_contract.md). Read the [fewshot guide](references/fewshot_guide.md) and relevant packaged sources before authoring. Spreadsheet input uses the [Excel contract](../nlp-baseline-workflow/references/excel_input_contract.md).
 
 ## Variant behavior

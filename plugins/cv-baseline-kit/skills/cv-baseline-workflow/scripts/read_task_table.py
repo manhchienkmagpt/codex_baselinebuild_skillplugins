@@ -40,6 +40,27 @@ def normalize(value):
 
 
 ALIASES = {normalize(alias): col[0] for col in COLUMNS for alias in col}
+ALIASES.update({normalize(alias): "task_number" for alias in (
+    "STT", "Số thứ tự", "task_number", "task number", "sequence number", "number", "No.",
+)})
+
+
+def task_number(value):
+    value = str(value).strip()
+    if re.fullmatch(r"[0-9]+(?:\.0+)?", value):
+        number = int(value.split(".")[0])
+        if number > 0:
+            return number
+    return None
+
+
+def output_dirname(number, task):
+    if number is None or not task.strip():
+        return None
+    title = unicodedata.normalize("NFC", task)
+    title = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', " - ", title)
+    title = " ".join(title.split()).strip(" .")
+    return f"{number}_{title}" if title else None
 
 
 def column_number(label):
@@ -155,7 +176,7 @@ def read_text(content):
             if not line.strip():
                 continue
             values = re.split(r"(?<!\\)\|", line.strip().strip("|"))
-            if all(re.fullmatch(r"\s*:?-{3,}:?\s*", v) for v in values):
+            if all(re.fullmatch(r"\s*:?-+:?\s*", v) for v in values):
                 continue
             table.append([v.strip().replace(r"\|", "|") for v in values])
     else:
@@ -185,9 +206,17 @@ def extract_tasks(rows, *, source, sheet, selections=(), header_row=None, formul
             headers = [(1, labeled)]
     if not headers and header_row is not None:
         raise ValueError(f"Không nhận diện được tiêu đề ở {sheet}, dòng {header_row}.")
-    positional = not headers and rows and all(len(cells) == len(COLUMNS) for cells in rows.values() if any(cells.values()))
+    populated = [cells for cells in rows.values() if any(cells.values())]
+    widths = {len(cells) for cells in populated}
+    positional_number = (not headers and bool(populated) and widths == {len(COLUMNS) + 1}
+                         and all(task_number(cells.get(1, "")) is not None for cells in populated))
+    positional = not headers and bool(populated) and (widths == {len(COLUMNS)} or positional_number)
     if positional:
-        headers = [(0, {i: col[0] for i, col in enumerate(COLUMNS, 1)})]
+        offset = 1 if positional_number else 0
+        mapping = {i + offset: col[0] for i, col in enumerate(COLUMNS, 1)}
+        if positional_number:
+            mapping[1] = "task_number"
+        headers = [(0, mapping)]
     if not headers:
         embedded_tasks, embedded_warnings = [], []
         if allow_embedded:
@@ -205,7 +234,7 @@ def extract_tasks(rows, *, source, sheet, selections=(), header_row=None, formul
                     embedded_tasks.extend(records)
         if embedded_tasks:
             return embedded_tasks, embedded_warnings
-        return [], [f"Bỏ qua {sheet}: không tìm thấy bảng bài toán; cần tiêu đề hoặc đúng 11 cột."]
+        return [], [f"Bỏ qua {sheet}: không tìm thấy bảng bài toán; cần tiêu đề, 11 cột hoặc STT + 11 cột."]
     tasks, warnings = [], []
     for row, cells in sorted(rows.items()):
         if bounds and not any(r1 <= row <= r2 for r1, _, r2, _ in bounds):
@@ -237,7 +266,11 @@ def extract_tasks(rows, *, source, sheet, selections=(), header_row=None, formul
         if missing_cache:
             record["_warnings"].append(f"Ô công thức chưa có giá trị lưu đệm ở cột {missing_cache}; không thực thi công thức.")
         if positional:
-            record["_warnings"].append("Không có tiêu đề: đã dùng thứ tự 11 cột đã quy định.")
+            record["_warnings"].append("Không có tiêu đề: đã dùng " + ("STT + 11 cột." if positional_number else "thứ tự 11 cột đã quy định."))
+        record["_task_number"] = task_number(record.get("task_number", ""))
+        if record.get("task_number", "").strip() and record["_task_number"] is None:
+            record["_warnings"].append("STT phải là số nguyên dương; cần giải quyết STT đầu vào trước khi đặt tên, không dùng số dòng Excel thay thế.")
+        record["_output_dirname"] = output_dirname(record["_task_number"], record["task"])
         base = slug(record["task"] + " " + record["dataset"])
         record["_output_slug"] = f"{base}-{slug(sheet)}-r{row}"
         tasks.append(record)

@@ -5,6 +5,8 @@ description: Generate or repair Vietnamese computer vision notebooks for image/v
 
 # CV Notebook Engineer
 
+Apply the [output naming convention](../cv-baseline-workflow/references/output_naming.md): default `outputs/cv/<STT>_<Tên bài toán>/`, preserve explicit STT or reuse/allocate the task number even in a fresh chat. Explicit user paths take precedence.
+
 
 Generate the requested subset of baseline.ipynb, baseline_basic.ipynb and baseline_hardcore.ipynb. Use independent fresh-kernel Run All, Vietnamese natural sections, flexible cells and fixed constants. Notebook-only requests do not require a new report.
 

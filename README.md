@@ -3,7 +3,7 @@
 Hai plugin giúp tạo notebook và báo cáo giải bài toán bằng tiếng Việt:
 
 | Plugin | Dùng cho |
-|---|---|
+| --- | --- |
 | `nlp-baseline-kit` | NLP, OCR, captioning, VQA và tác vụ đầu ra ngôn ngữ |
 | `cv-baseline-kit` | Phân loại ảnh, detection, segmentation, keypoints, restoration và video/tracking |
 
@@ -18,18 +18,24 @@ codex plugin add cv-baseline-kit@olympic-ai-nlp
 codex plugin list --marketplace olympic-ai-nlp
 ```
 
-Chỉ cần NLP hoặc CV thì cài plugin tương ứng. Marketplace được khai báo sẵn tại [`.agents/plugins/marketplace.json`](.agents/plugins/marketplace.json); không cần tự copy từng skill. Cú pháp theo [tài liệu lệnh Codex](https://learn.chatgpt.com/docs/developer-commands#codex-plugin).
+Chỉ cần NLP hoặc CV thì cài plugin tương ứng. Marketplace được khai báo sẵn tại [`.agents/plugins/marketplace.json`](.agents/plugins/marketplace.json); không cần tự copy từng skill.
 
-Sau khi cài, mở **phiên Codex mới** để sử dụng skill. Nếu CLI chưa có lệnh `plugin`, cập nhật Codex CLI trước. Xem [hướng dẫn plugin chính thức](https://learn.chatgpt.com/docs/plugins).
+Sau khi cài, mở **phiên Codex mới** để sử dụng skill. Nếu CLI chưa có lệnh `plugin`, cập nhật Codex CLI trước.
+
+Tài liệu tham khảo: [lệnh Codex](https://learn.chatgpt.com/docs/developer-commands#codex-plugin) · [hướng dẫn plugin chính thức](https://learn.chatgpt.com/docs/plugins).
 
 ## Sử dụng
 
-Trong hội thoại Codex, gọi workflow và gửi mô tả bài toán, đường dẫn/schema dữ liệu, split và metric mong muốn. Ví dụ:
+Trong hội thoại Codex, gọi workflow và gửi mô tả bài toán, đường dẫn/schema dữ liệu, split và metric mong muốn.
+
+### Ví dụ NLP
 
 ```text
 Dùng $nlp-baseline-workflow tạo baseline cho phân loại cảm xúc.
 Dữ liệu: data/reviews.csv; cột text và label; metric chính: macro-F1.
 ```
+
+### Ví dụ Computer Vision
 
 ```text
 Dùng $cv-baseline-workflow tạo baseline phân loại ảnh.
@@ -37,10 +43,93 @@ Dữ liệu: data/images/ chia sẵn train/val/test theo thư mục nhãn.
 Metric chính: accuracy.
 ```
 
-Mỗi plugin có ba skill: `*-baseline-workflow` cho toàn bộ quy trình, `*-notebook-engineer` cho notebook và `*-solution-architect` cho báo cáo. Có thể yêu cầu riêng một biến thể hoặc chỉ báo cáo.
+### Sử dụng với bảng bài toán
 
-Mặc định mỗi bài tạo `baseline.ipynb` (tối ưu), `baseline_basic.ipynb` (cơ bản, có training), `baseline_hardcore.ipynb` (model scratch chưa train, chỉ inference) và `huong_giai_quyet.md`. Kết quả NLP ở `outputs/<task_slug>/`, CV ở `outputs/cv/<task_slug>/`; thư mục `outputs/` được Git bỏ qua.
+Chuẩn bị bảng mô tả bài toán như ví dụ dưới đây, sau đó gửi **một hoặc nhiều dòng** cùng lời gọi skill trong Codex. Có thể sao chép các ô từ Excel hoặc dán bảng Markdown.
 
-Fewshot được đóng gói sẵn trong plugin: [mẫu NLP](plugins/nlp-baseline-kit/skills/nlp-notebook-engineer/assets/fewshot/) và [mẫu CV](plugins/cv-baseline-kit/skills/cv-notebook-engineer/assets/fewshot/). Mẫu thị giác hiện lấy từ captioning/OCR/FUNSD để tham khảo thành phần ảnh, chưa có mẫu CV thuần hoặc video.
+| STT | Nhóm bài toán | Bài toán cụ thể | Dataset khuyến nghị | Mức ưu tiên nguồn | Thư viện / cách lấy | Link nguồn | Lệnh tải / khởi tạo | Split có sẵn | Metric chính | Lưu ý đánh giá & tiền xử lý | Mức độ triển khai |
+| :---: | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | Image-to-Text | OCR (Optical Character Recognition) | IAM-line (Teklia) | Hugging Face | HF datasets | [Teklia/IAM-line](https://huggingface.co/datasets/Teklia/IAM-line) | `load_dataset("Teklia/IAM-line")` | train / validation / test | CER ↓; WER ↓ | OCR chữ viết tay tiếng Anh ở mức dòng; không đại diện OCR tiếng Việt hoặc văn bản in. | Dễ |
+| 2 | Image-to-Text | Image Captioning | MS COCO Captions 2014 | Thư viện | torchvision.datasets | [CocoCaptions](https://docs.pytorch.org/vision/master/generated/torchvision.datasets.CocoCaptions.html) | `CocoCaptions(root="val2014/", annFile="annotations/captions_val2014.json")` | train2014 / val2014; test COCO không mở nhãn | CIDEr ↑ | Torchvision chỉ đọc dữ liệu; phải tải ảnh và COCO captions annotations riêng; cài pycocotools. | Cần tải thủ công |
+| 3 | Image-to-Text | VQA (Visual Question Answering) | VQAv2 (LMMs-Lab Encoder) | Hugging Face | HF datasets | [lmms-lab-encoder/VQAv2](https://huggingface.co/datasets/lmms-lab-encoder/VQAv2) | `load_dataset("lmms-lab-encoder/VQAv2", split="validation", streaming=True)` | train / validation / test (test không có đáp án công khai) | VQA Accuracy ↑ | Dung lượng ảnh rất lớn; dùng streaming hoặc chọn validation để tự đánh giá có nhãn. | Nặng / streaming |
+| 4 | Image-to-Text | Document Understanding / Form Parsing | FUNSD (nielsr) | Hugging Face | HF datasets | [nielsr/funsd](https://huggingface.co/datasets/nielsr/funsd) | `load_dataset("nielsr/funsd")` | train (149) / test (50) | Entity F1 ↑; liên kết key-value F1 ↑ khi có liên kết | Bản HF có image, words, bboxes, ner_tags; chưa cung cấp đầy đủ liên kết câu hỏi–đáp án. Muốn K-V linking xem bản gốc. | Dễ |
 
-Git bỏ qua `outputs/`, `artifacts/`, bản sao `fewshot/` ngoài cùng, môi trường Python, cache và tệp tạm. Tài nguyên cần để cài plugin và dùng skill trong `.agents/` và `plugins/` vẫn được giữ lại.
+Dùng `$nlp-baseline-workflow` cho bài toán NLP và Image-to-Text trong bảng trên; dùng `$cv-baseline-workflow` cho các bài toán CV như phân loại ảnh, detection hoặc segmentation.
+
+Ví dụ tin nhắn gửi trong Codex để xử lý hai bài đầu:
+
+> `$nlp-baseline-workflow`
+>
+> | STT | Nhóm bài toán | Bài toán cụ thể | Dataset khuyến nghị | Mức ưu tiên nguồn | Thư viện / cách lấy | Link nguồn | Lệnh tải / khởi tạo | Split có sẵn | Metric chính | Lưu ý đánh giá & tiền xử lý | Mức độ triển khai |
+> | :---: | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+> | 1 | Image-to-Text | OCR (Optical Character Recognition) | IAM-line (Teklia) | Hugging Face | HF datasets | [Teklia/IAM-line](https://huggingface.co/datasets/Teklia/IAM-line) | `load_dataset("Teklia/IAM-line")` | train / validation / test | CER ↓; WER ↓ | OCR chữ viết tay tiếng Anh ở mức dòng; không đại diện OCR tiếng Việt hoặc văn bản in. | Dễ |
+> | 2 | Image-to-Text | Image Captioning | MS COCO Captions 2014 | Thư viện | torchvision.datasets | [CocoCaptions](https://docs.pytorch.org/vision/master/generated/torchvision.datasets.CocoCaptions.html) | `CocoCaptions(root="val2014/", annFile="annotations/captions_val2014.json")` | train2014 / val2014; test COCO không mở nhãn | CIDEr ↑ | Torchvision chỉ đọc dữ liệu; phải tải ảnh và COCO captions annotations riêng; cài pycocotools. | Cần tải thủ công |
+
+### Chọn skill
+
+Mỗi plugin có ba skill:
+
+| Skill | Phạm vi |
+| --- | --- |
+| `*-baseline-workflow` | Toàn bộ quy trình: notebook và báo cáo |
+| `*-notebook-engineer` | Tạo hoặc chỉnh sửa notebook |
+| `*-solution-architect` | Phân tích bài toán và viết báo cáo |
+
+Có thể yêu cầu riêng một biến thể hoặc chỉ báo cáo.
+
+## Tệp đầu ra
+
+Mặc định mỗi bài tạo bốn tệp:
+
+| Tệp | Nội dung |
+| --- | --- |
+| `baseline.ipynb` | Bản tối ưu |
+| `baseline_basic.ipynb` | Bản cơ bản, có huấn luyện |
+| `baseline_hardcore.ipynb` | Mô hình scratch chưa huấn luyện, chỉ suy luận |
+| `huong_giai_quyet.md` | Báo cáo hướng giải quyết bằng tiếng Việt |
+
+### Vị trí lưu
+
+| Nhóm bài toán | Thư mục mặc định |
+| --- | --- |
+| NLP | `outputs/<STT>_<Tên bài toán>/` |
+| Computer Vision | `outputs/cv/<STT>_<Tên bài toán>/` |
+
+Ví dụ:
+
+```text
+outputs/
+├── 14_Intent Classification/
+└── cv/
+    └── 1_Image Classification/
+```
+
+### Quy ước đánh số và đặt tên
+
+Quy ước được áp dụng kể cả trong phiên chat mới không nhắc lại cách đặt tên:
+
+- **Có STT trong yêu cầu hoặc bảng:** giữ nguyên STT.
+- **Không có STT:** dùng lại thư mục cùng bài toán/dataset; với bài mới, lấy số tiếp theo trong thư mục đầu ra, bắt đầu từ 1 khi chưa có.
+- **Có đường dẫn do người dùng chỉ định:** ưu tiên đường dẫn đó.
+- **Thư mục đã tồn tại:** không tự đổi tên.
+
+Chi tiết: [quy ước NLP](.agents/skills/nlp-baseline-workflow/references/output_naming.md) · [quy ước CV](.agents/skills/cv-baseline-workflow/references/output_naming.md).
+
+## Mẫu tham khảo
+
+Fewshot được đóng gói sẵn trong plugin:
+
+- [Mẫu NLP](plugins/nlp-baseline-kit/skills/nlp-notebook-engineer/assets/fewshot/)
+- [Mẫu CV](plugins/cv-baseline-kit/skills/cv-notebook-engineer/assets/fewshot/)
+
+Mẫu thị giác hiện lấy từ captioning/OCR/FUNSD để tham khảo thành phần ảnh, chưa có mẫu CV thuần hoặc video.
+
+## Quản lý tệp với Git
+
+Git bỏ qua:
+
+- Thư mục `outputs/` và `artifacts/`.
+- Bản sao `fewshot/` ngoài cùng.
+- Môi trường Python, cache và tệp tạm.
+
+Tài nguyên cần để cài plugin và dùng skill trong `.agents/` và `plugins/` vẫn được giữ lại.

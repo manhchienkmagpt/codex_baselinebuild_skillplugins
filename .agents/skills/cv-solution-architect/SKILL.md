@@ -7,6 +7,8 @@ description: Analyze image/video computer vision tasks and write a learner-frien
 
 Write huong_giai_quyet.md in Vietnamese for a learner. Follow the [five-part report contract](references/report_contract.md). Architect-only invocation creates only the report; do not claim implementation or training that did not happen.
 
+Apply the [output naming convention](../cv-baseline-workflow/references/output_naming.md): default `outputs/cv/<STT>_<Tên bài toán>/`, preserve explicit STT or reuse/allocate the task number even in a fresh chat. Explicit user paths take precedence.
+
 ## Required references
 
 Read the [decision playbook](references/decision_playbook.md), [pretraining policy](../cv-baseline-workflow/references/pretraining_policy.md) and [fixed runtime settings](../cv-notebook-engineer/references/runtime_config.md). Spreadsheet input follows the [Excel contract](../cv-baseline-workflow/references/excel_input_contract.md). The [three-variant notebook contract](../cv-baseline-workflow/references/dual_notebook_contract.md) still applies when notebooks are requested, but does not impose three-way report chapters. Use relevant [fewshot sources](../cv-notebook-engineer/references/fewshot_guide.md) to understand methods when helpful, not as report-layout requirements.
