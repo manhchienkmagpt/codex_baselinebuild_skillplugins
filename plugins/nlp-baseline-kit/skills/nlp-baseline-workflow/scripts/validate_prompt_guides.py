@@ -64,7 +64,7 @@ def check_prompt(prompt: str, errors: list[str], warnings: list[str], label: str
         warnings.append(f"{label}: long prompt; prefer fewer than 100 Gemini tokens (not measured offline)")
 
 
-def scan_guide(path: Path, variant: str) -> tuple[list[str], list[str]]:
+def scan_legacy_guide(path: Path, variant: str) -> tuple[list[str], list[str]]:
     errors: list[str] = []
     warnings: list[str] = []
     try:
@@ -180,6 +180,270 @@ def scan_guide(path: Path, variant: str) -> tuple[list[str], list[str]]:
             errors.append("Measured verification requires actual Gemini input/total evidence for every step")
         warnings.append("Offline validation checks supplied evidence arithmetic, not authenticity of API measurements")
     return errors, warnings
+
+
+def outside_fences(content: str) -> str:
+    """Mask fenced blocks without changing offsets, including headings in examples."""
+    result = []
+    fence = None
+    for line in content.splitlines(keepends=True):
+        match = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", line.rstrip("\r\n"))
+        if fence is None and match:
+            fence = match[1]
+            result.append(" " * len(line.rstrip("\r\n")) + line[len(line.rstrip("\r\n")):])
+        elif fence is not None:
+            result.append(" " * len(line.rstrip("\r\n")) + line[len(line.rstrip("\r\n")):])
+            if match and match[1][0] == fence[0] and len(match[1]) >= len(fence) and not match[2].strip():
+                fence = None
+        else:
+            result.append(line)
+    return "".join(result)
+
+
+def fenced_blocks(content: str, language: str) -> list[str]:
+    blocks = []
+    fence = None
+    capture = False
+    lines = []
+    for line in content.splitlines():
+        match = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", line)
+        if fence is None and match:
+            fence = match[1]
+            capture = match[2].strip() == language
+            lines = []
+        elif fence is not None:
+            if match and match[1][0] == fence[0] and len(match[1]) >= len(fence) and not match[2].strip():
+                if capture:
+                    blocks.append("\n".join(lines))
+                fence = None
+            else:
+                lines.append(line)
+    return blocks
+
+
+def subsection(block: str, heading: str) -> str:
+    masked = outside_fences(block)
+    match = re.search(r"^### " + re.escape(heading) + r"[ \t]*$", masked, re.MULTILINE)
+    if not match:
+        return ""
+    end = re.search(r"^### ", masked[match.end():], re.MULTILINE)
+    return block[match.end():match.end() + end.start()] if end else block[match.end():]
+
+
+FINGERPRINT_WORD = re.compile(r"fingerprint|dấu vân tay|vân tay dữ liệu", re.IGNORECASE)
+
+
+def source_attachment_spans(content: str) -> list[tuple[int, int]]:
+    """Only real Python inputs under Code gửi kèm are exempt from prose rules."""
+    masked = outside_fences(content)
+    spans = []
+    for heading in re.finditer(r"^### Code gửi kèm[ \t]*$", masked, re.MULTILINE):
+        following = re.search(r"^#{2,3} ", masked[heading.end():], re.MULTILINE)
+        stop = heading.end() + following.start() if following else len(content)
+        position, start, fence, language = heading.end(), 0, None, ""
+        for line in content[heading.end():stop].splitlines(keepends=True):
+            match = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", line.rstrip("\r\n"))
+            if fence is None and match:
+                start, fence, language = position, match[1], match[2].strip()
+            elif fence is not None and match and match[1][0] == fence[0] and len(match[1]) >= len(fence) and not match[2].strip():
+                if language == "python":
+                    spans.append((start, position + len(line)))
+                fence = None
+            position += len(line)
+    return spans
+
+
+def instruction_text(content: str) -> str:
+    for start, stop in reversed(source_attachment_spans(content)):
+        content = content[:start] + content[stop:]
+    return content
+
+
+def checked_budget(value: str, errors: list[str], label: str) -> tuple[int, int]:
+    match = re.fullmatch(r"input=(\d+); output=(\d+); reserve=(\d+)", value)
+    if not match:
+        errors.append(f"{label}: malformed Budget")
+        return (0, 0)
+    inp, out, reserve = map(int, match.groups())
+    if min(inp, out) <= 0 or inp + out + reserve > 2000:
+        errors.append(f"{label}: budget must have positive input/output and total <= 2000")
+    return inp, out
+
+
+def scan_modular_guide(path: Path, variant: str, content: str) -> tuple[list[str], list[str]]:
+    errors: list[str] = []
+    warnings: list[str] = []
+    masked = outside_fences(content)
+    steps = list(STEP.finditer(masked))
+    header = masked[:steps[0].start()] if steps else masked
+    formats = field_values(header, "Format")
+    compact = formats == ["3"]
+    if compact and FINGERPRINT_WORD.search(instruction_text(content)):
+        errors.append("Guide: fingerprint steps/contracts are excluded; only original basic source attachments may contain them")
+    for key, expected in (("Format", "3" if compact else "2"), ("Variant", variant), ("Model", "gemini-3.8-flash"), ("Thinking", "low")):
+        if single_field(header, key, errors, "Guide") != expected:
+            errors.append(f"Guide: {key} must be {expected}")
+    verification = single_field(header, "Token verification", errors, "Guide")
+    if verification not in ("unverified", "measured"):
+        errors.append("Guide: Token verification must be unverified or measured")
+    if verification == "unverified":
+        warnings.append("Gemini token usage is unverified; budgets are allowances, not measured counts")
+    if not steps:
+        return errors + ["Guide has no numbered steps"], warnings
+    merge_budget = single_field(header, "Context merge budget", errors, "Guide")
+    merge_limits = checked_budget(merge_budget, errors, "Guide context merge")
+    known: dict[str, set[str]] = {}
+    consumed: set[str] = set()
+    summarized: set[str] = set()
+    budgets: dict[str, tuple[int, int]] = {}
+    config_owners: dict[str, str] = {}
+    kinds = []
+    for index, heading in enumerate(steps):
+        label = f"Step {index + 1}"
+        if int(heading[1]) != index + 1:
+            errors.append(f"{label}: numbering must be consecutive from 1")
+        end = steps[index + 1].start() if index + 1 < len(steps) else len(content)
+        block = content[heading.end():end]
+        metadata = re.findall(r"<!-- module\s*\n(.*?)-->", outside_fences(block), re.DOTALL)
+        if len(metadata) != 1:
+            errors.append(f"{label}: require one hidden module metadata block")
+            continue
+        metadata = metadata[0]
+        values = {key: single_field(metadata, key, errors, label)
+                  for key in ("ID", "Depends", "Kind", "Budget", "Summary")}
+        identifier, kind = values["ID"], values["Kind"]
+        if not re.fullmatch(r"[a-z][a-z0-9_-]*", identifier) or identifier in known:
+            errors.append(f"{label}: invalid or duplicate ID {identifier!r}")
+        depends = [] if values["Depends"] == "none" else [part.strip() for part in values["Depends"].split(",")]
+        if len(depends) != len(set(depends)) or any(dep not in known for dep in depends):
+            errors.append(f"{label}: dependencies must be unique earlier step IDs")
+        consumed.update(depends)
+        ancestors = set(depends)
+        for dep in depends:
+            ancestors.update(known.get(dep, set()))
+        known[identifier] = ancestors
+        kinds.append(kind)
+        if kind not in ("code", "summary", "integration"):
+            errors.append(f"{label}: unsupported Kind {kind!r}")
+        budgets[identifier] = checked_budget(values["Budget"], errors, label)
+        for heading_text in (() if compact else ("Thông tin cần có", "Chuẩn bị context", "Ghép kết quả")):
+            if not subsection(block, heading_text).strip():
+                errors.append(f"{label}: missing {heading_text} instructions")
+        sources = field_values(metadata, "Source")
+        summary_input = field_values(metadata, "Summary input")
+        if summary_input and (kind != "summary" or summary_input != ["code"] or variant != "basic" or not sources):
+            errors.append(f"{label}: code-summary input requires basic source references")
+        prompt_heading = {"code": "Prompt tạo hoặc sửa module", "summary": "Prompt tóm tắt module" if summary_input else "Prompt gộp context",
+                          "integration": "Prompt ghép và kiểm tra"}.get(kind, "")
+        prompt_section = subsection(block, prompt_heading)
+        prompts = fenced_blocks(prompt_section, "text")
+        if len(prompts) != 1 or not prompts[0].strip():
+            errors.append(f"{label}: require one nonempty text prompt")
+        prompt = prompts[0] if prompts else ""
+        for dep in depends:
+            if f"[Dán tóm tắt {dep}]" not in prompt:
+                errors.append(f"{label}: missing context slot for {dep}")
+            if f"(#context-{dep})" not in subsection(block, "Context cần chuẩn bị" if compact else "Chuẩn bị context"):
+                errors.append(f"{label}: missing summary prompt link for {dep}")
+        if compact:
+            if subsection(block, "Ghép kết quả").strip():
+                errors.append(f"{label}: compact guides must not contain merge-location instructions")
+            owns = [x.strip() for line in field_values(metadata, "Config owns") for x in line.split(",") if x.strip()]
+            uses = [x.strip() for line in field_values(metadata, "Config uses") for x in line.split(",") if x.strip()]
+            for name in owns:
+                if name in config_owners:
+                    errors.append(f"{label}: configuration {name} already owned by {config_owners[name]}")
+                config_owners[name] = identifier
+            for name in set(uses) - set(owns):
+                if config_owners.get(name) not in ancestors:
+                    errors.append(f"{label}: configuration {name} needs its owner's context")
+            if kind == "code" and "imports" not in prompt.lower():
+                errors.append(f"{label}: generated module must include required imports")
+        slots = set(re.findall(r"\[Dán tóm tắt ([a-z][a-z0-9_-]*)\]", prompt))
+        if slots != set(depends):
+            errors.append(f"{label}: context slots must match direct dependencies")
+        excerpts = [scan_reference(source, path.parent, "baseline_basic.ipynb", errors, label) for source in sources]
+        targets = field_values(metadata, "Target")
+        for target in targets:
+            scan_reference(target, path.parent, "baseline.ipynb", errors, label)
+        if kind == "code" and not targets:
+            errors.append(f"{label}: code module requires a target location")
+        attached = fenced_blocks(subsection(block, "Code gửi kèm"), "python")
+        if variant == "hardcore" and (sources or attached or fenced_blocks(prompt_section, "python")):
+            errors.append(f"{label}: hardcore generation cannot attach source code")
+        if variant == "hardcore" and re.search(r"(?:dán|gửi|đính kèm|đọc)\s+(?:đoạn\s+)?(?:code|mã nguồn)|code gửi kèm", prompt, re.I):
+            errors.append(f"{label}: hardcore generation must use prose and summaries only")
+        if variant == "basic" and sources and attached != excerpts:
+            errors.append(f"{label}: attached code must match the referenced notebook excerpt")
+        if attached and not sources:
+            errors.append(f"{label}: attached code requires Source references")
+        if variant == "basic" and kind == "code" and not sources and "bổ sung mới" not in subsection(block, "Code gửi kèm").lower():
+            errors.append(f"{label}: new basic module must explicitly say bổ sung mới")
+        summary = subsection(block, "Tóm tắt context để dùng tiếp")
+        if values["Summary"] not in ("yes", "no"):
+            errors.append(f"{label}: Summary must be yes or no")
+        if values["Summary"] == "yes":
+            summarized.add(identifier)
+            if kind != "summary":
+                budget = single_field(metadata, "Summary budget", errors, label)
+                budgets[f"{identifier}:summary"] = checked_budget(budget, errors, label + " summary")
+            if f'<a id="context-{identifier}"></a>' not in block:
+                errors.append(f"{label}: missing summary anchor")
+            texts = fenced_blocks(summary, "text")
+            if kind == "summary":
+                if not summary.strip() and not compact:
+                    errors.append(f"{label}: missing combined context instructions")
+            elif len(texts) != 1 or not fenced_blocks(summary, "python"):
+                errors.append(f"{label}: summary requires a text prompt and current-code slot")
+            elif set(re.findall(r"\[Dán tóm tắt ([a-z][a-z0-9_-]*)\]", texts[0])) - set(depends):
+                errors.append(f"{label}: summary references unknown prerequisite context")
+        elif summary.strip():
+            errors.append(f"{label}: unexpected summary subsection")
+        if budgets[identifier][0] and len(prompt + "\n".join(excerpts)) > budgets[identifier][0] * 3:
+            warnings.append(f"{label}: large input; count with Gemini and split before sending if over allowance")
+        if index == len(steps) - 1:
+            if kind != "integration":
+                errors.append("Final step must be integration")
+            if not (set(known) - {identifier}).issubset(ancestors):
+                errors.append("Final integration must transitively cover all earlier steps")
+    if consumed - summarized:
+        errors.append("Missing summary prompts for consumed modules: " + ", ".join(sorted(consumed - summarized)))
+    if "code" not in kinds and variant != "basic":
+        errors.append("Guide must include code-producing steps")
+    if verification == "measured":
+        measured = set()
+        for raw in field_values(header, "Measurement"):
+            try:
+                evidence = json.loads(raw)
+                session = evidence["step"]
+                if session == "context-merge":
+                    budgets[session] = merge_limits
+                inp, total = evidence["input_tokens"], evidence["total_tokens"]
+                if session not in budgets or session in measured:
+                    raise ValueError("unknown/duplicate session")
+                if evidence["model"] != "gemini-3.8-flash" or evidence["method"] != "Gemini countTokens + usageMetadata":
+                    raise ValueError("evidence must use target Gemini counters")
+                if type(inp) is not int or type(total) is not int or not 0 < inp <= budgets[session][0] or not inp <= total <= 2000 or total - inp > budgets[session][1]:
+                    raise ValueError("invalid or excessive measured usage")
+                measured.add(session)
+            except (KeyError, TypeError, ValueError) as exc:
+                errors.append(f"Invalid Measurement: {exc}")
+        if measured != set(budgets):
+            errors.append("Measured verification requires evidence for every generation and summary session")
+    return errors, warnings
+
+
+def scan_guide(path: Path, variant: str) -> tuple[list[str], list[str]]:
+    try:
+        content = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        return [f"Cannot read guide: {exc}"], []
+    header = outside_fences(content).split("## Bước ", 1)[0]
+    if re.search(r"^Format: [23]\s*$", header, re.MULTILINE):
+        return scan_modular_guide(path, variant, content)
+    if re.search(r"^Format:", header, re.MULTILINE):
+        return ["Unsupported prompt guide format"], []
+    return scan_legacy_guide(path, variant)
 
 
 def scan_directory(directory: Path, variants: tuple[str, ...] = ("basic", "hardcore")) -> tuple[list[str], list[str]]:

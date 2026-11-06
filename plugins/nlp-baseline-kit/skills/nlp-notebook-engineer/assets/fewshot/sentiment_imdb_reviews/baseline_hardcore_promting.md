@@ -1,196 +1,973 @@
 # Prompt hardcore: IMDb: TF-IDF từ/ký tự và NB-SVM
 
+<!-- prompt-guide
+Format: 3
 Variant: hardcore
 Model: gemini-3.8-flash
 Thinking: low
 Token verification: unverified
+Context merge budget: input=1200; output=500; reserve=300
+-->
 
-Đích là phương pháp/chức năng của baseline.ipynb, không phải cam kết cùng điểm số. Cell được đếm từ 1, gồm cả Markdown; dòng tính trong cell gốc. Target để người học đối chiếu, không phải code phải gửi cho chatbot. Các notebook và báo cáo mẫu được giữ nguyên; làm các nâng cấp trong bản làm việc riêng. Notebook hardcore gốc vẫn chỉ inference chưa huấn luyện.
+Mỗi lần mở phiên mới, gửi prompt và nội dung đính kèm được chỉ định. Lấy context ở các liên kết trước khi dán vào prompt; dùng lại tóm tắt nếu code chưa đổi.
 
-Mỗi bước mở một phiên mới và chỉ gửi nội dung Input cùng đoạn Prompt, không gửi cả hướng dẫn. Basic dùng đoạn Source hiện tại sau các sửa đổi, không chép lại bản cũ làm mất thay đổi; nếu cell đã tách, tìm đúng hàm/đoạn tương ứng. Hardcore chỉ dùng mô tả và bản tóm tắt chữ, không gửi code. Những yêu cầu đặc tả trong Input là phần cần gửi cùng prompt; không dựa vào việc chatbot đọc được file này.
+## Bước 1: sha(text)
 
-Đối chiếu code và bản tóm tắt API sau mỗi bước, lưu code cục bộ và chỉ chuyển hợp đồng cần thiết. Các nhánh có nhiều phụ thuộc chỉ gửi tóm tắt liên quan; nếu quá dài, dùng prompt gộp ở bước summary trong một phiên riêng trước module đó, với Depends là các bước đã hoàn tất. Gộp mất chữ ký/cấu hình thì bổ sung trong phiên nhỏ khác; không đoán. Bước gộp cuối chỉ giữ exports/cấu hình phục vụ glue, không tích lũy lịch sử hay toàn bộ thuật toán.
-
-Giới hạn mỗi phiên là 2000 tokens gồm prompt, code, tóm tắt, system instructions, câu trả lời và thinking. Các Budget dưới đây là hạn mức dự kiến 600 input + 1100 thinking/output + 300 dự phòng, CHƯA đo bằng Gemini. Ưu tiên prompt dưới 100 tokens nhưng giữ yêu cầu bắt buộc. Dùng Gemini countTokens đo input thực tế; đặt max_output_tokens tối đa1100 nếu nền tảng hỗ trợ và kiểm usageMetadata gồm thinking. Nếu vượt600 input hoặc phần code/handoff không đủ output, chia module thành unit nhỏ và tính lại trước khi gửi. Không dùng số từ/ký tự hay tokenizer model khác làm số đo Gemini. Không có bộ đếm/cấu hình trần thì trạng thái vẫn chưa kiểm chứng; không hứa tự bảo đảm giới hạn bằng lời prompt.
-
-Nếu output bị cắt, chỉ giữ unit hoàn chỉnh; phiên mới gửi tóm tắt cần thiết và yêu cầu unit nhỏ còn thiếu, không yêu cầu tiếp tục dựa vào lịch sử cũ. Giữ fixed constants, PyTorch precision thường nếu dùng PyTorch; không AMP, tự dò VRAM hay tự thay batch khi OOM. Fit biểu diễn chỉ train, chọn checkpoint trên validation, chấm held-out sau khi chốt. 32GB là mục tiêu thiết kế, không phải số đo đã chạy.
-
-## Bước 1: Dữ liệu, split và schema
-ID: data
+<!-- module
+ID: m003
 Depends: none
 Kind: code
-Target: baseline.ipynb#cell=5; lines=1-6
-Input: Prompt, đặc tả chữ: TFDS imdb_reviews; local JSONL train/test có id, text, label với neg=0, pos=1. Chuẩn hóa HTML/NFC, gộp khoảng trắng; giữ test chuẩn. Train chia StratifiedGroupKFold theo hash text chuẩn hóa, seed=42, giữ train_idx/val_idx (fold đầu của 5 folds) và SPLIT_INFO như bản tham chiếu. train_text/val_text: list[str]; y_train/y_val: int64[N]; nhãn [neg,pos]; dữ liệu thưa CSR; không cần GPU. Không gửi mã nguồn.
-Merge: Lưu riêng phần data để ghép vào bản làm việc theo cell 5, dòng 1–6 của bản đích; giữ các phần đã sinh. Nếu là lát method, nối đúng thứ tự trong cùng class; không chạy khi class còn thiếu phần. Cập nhật caller theo API dưới đây.
-Budget: input=600; output=1100; reserve=300
-Handoff: TFDS imdb_reviews; local JSONL train/test có id, text, label với neg=0, pos=1. Chuẩn hóa HTML/NFC, gộp khoảng trắng; giữ test chuẩn. Train chia StratifiedGroupKFold theo hash text chuẩn hóa, seed=42, giữ train_idx/val_idx (fold đầu của 5 folds) và SPLIT_INFO như bản tham chiếu. train_text/val_text: list[str]; y_train/y_val: int64[N]; nhãn [neg,pos]; dữ liệu thưa CSR; không cần GPU. Giữ thêm chữ ký/import/cấu hình từ các phụ thuộc còn được caller dùng; chỉ tóm tắt chữ, đối chiếu với code vừa sinh.
-### Prompt
-Viết hàm đọc nguồn dữ liệu theo đặc tả và trả record thô, báo lỗi rõ khi thiếu nguồn; chưa chia hay fit dữ liệu. Trả riêng code phần này và tóm tắt API ngắn cho phiên sau.
+Budget: input=800; output=1000; reserve=200
+Summary: yes
+Target: baseline.ipynb#cell=3; lines=25-26
+Summary budget: input=1200; output=500; reserve=300
+-->
 
-## Bước 2: Chuẩn hóa schema và chia nhóm
-ID: splits
-Depends: data
-Kind: code
-Target: baseline.ipynb#cell=5; lines=1-6
-Input: Prompt, bản tóm tắt chữ của data, đặc tả chữ: TFDS imdb_reviews; local JSONL train/test có id, text, label với neg=0, pos=1. Chuẩn hóa HTML/NFC, gộp khoảng trắng; giữ test chuẩn. Train chia StratifiedGroupKFold theo hash text chuẩn hóa, seed=42, giữ train_idx/val_idx (fold đầu của 5 folds) và SPLIT_INFO như bản tham chiếu. Đầu ra train_records,val_records,test_records theo đúng thứ tự, cùng fingerprints như bản tham chiếu. Không gửi mã nguồn.
-Merge: Lưu riêng phần splits để ghép vào bản làm việc theo cell 5, dòng 1–6 của bản đích; giữ các phần đã sinh. Nếu là lát method, nối đúng thứ tự trong cùng class; không chạy khi class còn thiếu phần. Cập nhật caller theo API dưới đây.
-Budget: input=600; output=1100; reserve=300
-Handoff: TFDS imdb_reviews; local JSONL train/test có id, text, label với neg=0, pos=1. Chuẩn hóa HTML/NFC, gộp khoảng trắng; giữ test chuẩn. Train chia StratifiedGroupKFold theo hash text chuẩn hóa, seed=42, giữ train_idx/val_idx (fold đầu của 5 folds) và SPLIT_INFO như bản tham chiếu. Đầu ra train_records,val_records,test_records theo đúng thứ tự, cùng fingerprints như bản tham chiếu. Giữ thêm chữ ký/import/cấu hình từ các phụ thuộc còn được caller dùng; chỉ tóm tắt chữ, đối chiếu với code vừa sinh.
-### Prompt
-Viết phần chuẩn hóa record và split đúng đặc tả, kiểm IDs và ngăn rò rỉ; không fit đặc trưng ở bước này. Trả riêng code phần này và tóm tắt API ngắn cho phiên sau.
+### Prompt tạo hoặc sửa module
 
-## Bước 3: Imports và cấu hình cố định
-ID: config
-Depends: splits
-Kind: code
-Target: baseline.ipynb#cell=3; lines=1-6
-Input: Prompt, bản tóm tắt chữ của splits, đặc tả chữ: Vòng C fit sklearn trên train, không epochs/backprop; chọn macro_f1 validation tăng; joblib đủ features,ratio,classifier,label_names,validation. train_text/val_text: list[str]; y_train/y_val: int64[N]; nhãn [neg,pos]; dữ liệu thưa CSR; không cần GPU. Cấu hình mô hình sẽ được bổ sung đúng khi dựng từng module; không đặt pretrained text model. Không gửi mã nguồn.
-Merge: Lưu riêng phần config để ghép vào bản làm việc theo cell 3, dòng 1–6 của bản đích; giữ các phần đã sinh. Nếu là lát method, nối đúng thứ tự trong cùng class; không chạy khi class còn thiếu phần. Cập nhật caller theo API dưới đây.
-Budget: input=600; output=1100; reserve=300
-Handoff: Vòng C fit sklearn trên train, không epochs/backprop; chọn macro_f1 validation tăng; joblib đủ features,ratio,classifier,label_names,validation. train_text/val_text: list[str]; y_train/y_val: int64[N]; nhãn [neg,pos]; dữ liệu thưa CSR; không cần GPU. Cấu hình mô hình sẽ được bổ sung đúng khi dựng từng module; không đặt pretrained text model. Giữ thêm chữ ký/import/cấu hình từ các phụ thuộc còn được caller dùng; chỉ tóm tắt chữ, đối chiếu với code vừa sinh.
-### Prompt
-Viết imports và constants cần cho các module theo đặc tả, giữ seed42 và device cuda/cpu đơn giản. Trả riêng code phần này và tóm tắt API ngắn cho phiên sau.
+```text
+Viết sha(text). Tạo hash ổn định của văn bản để nhận diện nhóm trùng lặp. Trả code kèm imports cần dùng; dùng đúng I/O và các lựa chọn đã có trong context.
+```
 
-## Bước 4: TF-IDF từ và ký tự
-ID: features
-Depends: config
+### Tóm tắt context để dùng tiếp
+
+<a id="context-m003"></a>
+
+```text
+Tóm tắt giao diện sha(text) từ code dưới đây. Giữ chữ ký, I/O, shape/dtype/device, các tham số đã chọn và trạng thái dùng chung; chỉ trả chữ, không viết lại code hoặc đoán thông tin thiếu.
+```
+
+```python
+# Dán code hiện tại của sha(text) tại đây.
+```
+
+## Bước 2: read_jsonl(path)
+
+<!-- module
+ID: m005
+Depends: none
 Kind: code
+Budget: input=800; output=1000; reserve=200
+Summary: yes
+Target: baseline.ipynb#cell=3; lines=31-36
+Summary budget: input=1200; output=500; reserve=300
+-->
+
+### Prompt tạo hoặc sửa module
+
+```text
+Viết read_jsonl(path). Đọc UTF-8 JSONL, giữ thứ tự bản ghi và báo rõ lỗi thiếu file hoặc dữ liệu không hợp lệ. Trả code kèm imports cần dùng; dùng đúng I/O và các lựa chọn đã có trong context.
+```
+
+### Tóm tắt context để dùng tiếp
+
+<a id="context-m005"></a>
+
+```text
+Tóm tắt giao diện read_jsonl(path) từ code dưới đây. Giữ chữ ký, I/O, shape/dtype/device, các tham số đã chọn và trạng thái dùng chung; chỉ trả chữ, không viết lại code hoặc đoán thông tin thiếu.
+```
+
+```python
+# Dán code hiện tại của read_jsonl(path) tại đây.
+```
+
+## Bước 3: normalize_text(text)
+
+<!-- module
+ID: m009
+Depends: none
+Kind: code
+Budget: input=800; output=1000; reserve=200
+Summary: yes
+Target: baseline.ipynb#cell=5; lines=1-4
+Summary budget: input=1200; output=500; reserve=300
+-->
+
+### Prompt tạo hoặc sửa module
+
+```text
+Viết normalize_text(text). Viết hàm đọc nguồn dữ liệu theo đặc tả và trả record thô, báo lỗi rõ khi thiếu nguồn; chưa chia hay fit dữ liệu. TFDS imdb_reviews; local JSONL train/test có id, text, label với neg=0, pos=1. Chuẩn hóa HTML/NFC, gộp khoảng trắng; giữ test chuẩn. Trả code kèm imports cần dùng; dùng đúng I/O và các lựa chọn đã có trong context.
+```
+
+### Tóm tắt context để dùng tiếp
+
+<a id="context-m009"></a>
+
+```text
+Tóm tắt giao diện normalize_text(text) từ code dưới đây. Giữ chữ ký, I/O, shape/dtype/device, các tham số đã chọn và trạng thái dùng chung; chỉ trả chữ, không viết lại code hoặc đoán thông tin thiếu.
+```
+
+```python
+# Dán code hiện tại của normalize_text(text) tại đây.
+```
+
+## Bước 4: canonical_rows(rows, split)
+
+<!-- module
+ID: m010
+Depends: m003
+Kind: code
+Budget: input=800; output=1000; reserve=200
+Summary: yes
+Target: baseline.ipynb#cell=5; lines=6-18
+Summary budget: input=1200; output=500; reserve=300
+Config owns: LABEL_NAMES
+Config uses: LABEL_NAMES
+-->
+
+### Context cần chuẩn bị
+
+Lần lượt dùng các prompt tóm tắt sau, hoặc dùng lại context khớp code hiện tại:
+
+1. [sha(text)](#context-m003)
+
+### Prompt tạo hoặc sửa module
+
+```text
+Viết canonical_rows(rows, split). Viết hàm đọc nguồn dữ liệu theo đặc tả và trả record thô, báo lỗi rõ khi thiếu nguồn; chưa chia hay fit dữ liệu. TFDS imdb_reviews; local JSONL train/test có id, text, label với neg=0, pos=1. Chuẩn hóa HTML/NFC, gộp khoảng trắng; giữ test chuẩn. Giữ ràng buộc: LABEL_NAMES=['neg', 'pos']. Trả code kèm imports cần dùng; dùng đúng I/O và các lựa chọn đã có trong context.
+
+Context m003 — sha(text):
+[Dán tóm tắt m003]
+```
+
+### Tóm tắt context để dùng tiếp
+
+<a id="context-m010"></a>
+
+```text
+Tóm tắt giao diện canonical_rows(rows, split) từ code dưới đây. Giữ chữ ký, I/O, shape/dtype/device, các tham số đã chọn và trạng thái dùng chung; chỉ trả chữ, không viết lại code hoặc đoán thông tin thiếu.
+
+Context m003 — sha(text):
+[Dán tóm tắt m003]
+```
+
+```python
+# Dán code hiện tại của canonical_rows(rows, split) tại đây.
+```
+
+## Bước 5: load_raw(split) — phần 1/3
+
+<!-- module
+ID: m011
+Depends: m005, m010
+Kind: code
+Budget: input=800; output=1000; reserve=200
+Summary: yes
+Target: baseline.ipynb#cell=5; lines=20-24
+Summary budget: input=1200; output=500; reserve=300
+Config owns: DATA_DIR, TASK
+Config uses: DATA_DIR, LABEL_NAMES, TASK
+-->
+
+### Context cần chuẩn bị
+
+Lần lượt dùng các prompt tóm tắt sau, hoặc dùng lại context khớp code hiện tại:
+
+1. [read_jsonl(path)](#context-m005)
+2. [canonical_rows(rows, split)](#context-m010)
+
+### Prompt tạo hoặc sửa module
+
+```text
+Viết load_raw(split) — phần 1/3. Triển khai đúng chức năng và hợp đồng đầu vào/đầu ra của module theo context. Giữ ràng buộc: DATA_DIR=Path('data/sentiment_imdb_reviews'). Tự chọn TASK phù hợp và khai báo ngay trong module này; nêu ngắn lý do. Dùng lại LABEL_NAMES từ context, không chọn hoặc khai báo lại giá trị. Đây là phần 1/3 của cùng callable; giữ scope và biến trung gian từ context, chỉ chạy khi đủ phần. Trả code kèm imports cần dùng; dùng đúng I/O và các lựa chọn đã có trong context.
+
+Context m005 — read_jsonl(path):
+[Dán tóm tắt m005]
+
+Context m010 — canonical_rows(rows, split):
+[Dán tóm tắt m010]
+```
+
+### Tóm tắt context để dùng tiếp
+
+<a id="context-m011"></a>
+
+```text
+Tóm tắt giao diện load_raw(split) — phần 1/3 từ code dưới đây. Giữ chữ ký, I/O, shape/dtype/device, các tham số đã chọn và trạng thái dùng chung; chỉ trả chữ, không viết lại code hoặc đoán thông tin thiếu.
+
+Context m005 — read_jsonl(path):
+[Dán tóm tắt m005]
+
+Context m010 — canonical_rows(rows, split):
+[Dán tóm tắt m010]
+```
+
+```python
+# Dán code hiện tại của load_raw(split) — phần 1/3 tại đây.
+```
+
+## Bước 6: load_raw(split) — phần 2/3
+
+<!-- module
+ID: m012
+Depends: m005, m010, m011
+Kind: code
+Budget: input=800; output=1000; reserve=200
+Summary: yes
+Target: baseline.ipynb#cell=5; lines=25-71
+Summary budget: input=1200; output=500; reserve=300
+Config uses: DATA_DIR, LABEL_NAMES, TASK
+-->
+
+### Context cần chuẩn bị
+
+Lần lượt dùng các prompt tóm tắt sau, hoặc dùng lại context khớp code hiện tại:
+
+1. [read_jsonl(path)](#context-m005)
+2. [canonical_rows(rows, split)](#context-m010)
+3. [load_raw(split) — phần 1/3](#context-m011)
+
+### Prompt tạo hoặc sửa module
+
+```text
+Viết load_raw(split) — phần 2/3. Triển khai đúng chức năng và hợp đồng đầu vào/đầu ra của module theo context. Dùng lại DATA_DIR, LABEL_NAMES, TASK từ context, không chọn hoặc khai báo lại giá trị. Đây là phần 2/3 của cùng callable; giữ scope và biến trung gian từ context, chỉ chạy khi đủ phần. Trả code kèm imports cần dùng; dùng đúng I/O và các lựa chọn đã có trong context.
+
+Context m005 — read_jsonl(path):
+[Dán tóm tắt m005]
+
+Context m010 — canonical_rows(rows, split):
+[Dán tóm tắt m010]
+
+Context m011 — load_raw(split) — phần 1/3:
+[Dán tóm tắt m011]
+```
+
+### Tóm tắt context để dùng tiếp
+
+<a id="context-m012"></a>
+
+```text
+Tóm tắt giao diện load_raw(split) — phần 2/3 từ code dưới đây. Giữ chữ ký, I/O, shape/dtype/device, các tham số đã chọn và trạng thái dùng chung; chỉ trả chữ, không viết lại code hoặc đoán thông tin thiếu.
+
+Context m005 — read_jsonl(path):
+[Dán tóm tắt m005]
+
+Context m010 — canonical_rows(rows, split):
+[Dán tóm tắt m010]
+
+Context m011 — load_raw(split) — phần 1/3:
+[Dán tóm tắt m011]
+```
+
+```python
+# Dán code hiện tại của load_raw(split) — phần 2/3 tại đây.
+```
+
+## Bước 7: load_raw(split) — phần 3/3
+
+<!-- module
+ID: m013
+Depends: m005, m010, m011, m012
+Kind: code
+Budget: input=800; output=1000; reserve=200
+Summary: yes
+Target: baseline.ipynb#cell=5; lines=72-72
+Summary budget: input=1200; output=500; reserve=300
+Config uses: DATA_DIR, LABEL_NAMES, TASK
+-->
+
+### Context cần chuẩn bị
+
+Lần lượt dùng các prompt tóm tắt sau, hoặc dùng lại context khớp code hiện tại:
+
+1. [read_jsonl(path)](#context-m005)
+2. [canonical_rows(rows, split)](#context-m010)
+3. [load_raw(split) — phần 1/3](#context-m011)
+4. [load_raw(split) — phần 2/3](#context-m012)
+
+### Prompt tạo hoặc sửa module
+
+```text
+Viết load_raw(split) — phần 3/3. Triển khai đúng chức năng và hợp đồng đầu vào/đầu ra của module theo context. Dùng lại DATA_DIR, LABEL_NAMES, TASK từ context, không chọn hoặc khai báo lại giá trị. Đây là phần 3/3 của cùng callable; giữ scope và biến trung gian từ context, chỉ chạy khi đủ phần. Trả code kèm imports cần dùng; dùng đúng I/O và các lựa chọn đã có trong context.
+
+Context m005 — read_jsonl(path):
+[Dán tóm tắt m005]
+
+Context m010 — canonical_rows(rows, split):
+[Dán tóm tắt m010]
+
+Context m011 — load_raw(split) — phần 1/3:
+[Dán tóm tắt m011]
+
+Context m012 — load_raw(split) — phần 2/3:
+[Dán tóm tắt m012]
+```
+
+### Tóm tắt context để dùng tiếp
+
+<a id="context-m013"></a>
+
+```text
+Tóm tắt giao diện load_raw(split) — phần 3/3 từ code dưới đây. Giữ chữ ký, I/O, shape/dtype/device, các tham số đã chọn và trạng thái dùng chung; chỉ trả chữ, không viết lại code hoặc đoán thông tin thiếu.
+
+Context m005 — read_jsonl(path):
+[Dán tóm tắt m005]
+
+Context m010 — canonical_rows(rows, split):
+[Dán tóm tắt m010]
+
+Context m011 — load_raw(split) — phần 1/3:
+[Dán tóm tắt m011]
+
+Context m012 — load_raw(split) — phần 2/3:
+[Dán tóm tắt m012]
+```
+
+```python
+# Dán code hiện tại của load_raw(split) — phần 3/3 tại đây.
+```
+
+## Bước 8: Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train…
+
+<!-- module
+ID: m014
+Depends: m003, m009, m010, m013
+Kind: code
+Budget: input=800; output=1000; reserve=200
+Summary: yes
+Target: baseline.ipynb#cell=5; lines=74-94
+Summary budget: input=1200; output=500; reserve=300
+Config owns: SEED, SOURCE
+Config uses: LABEL_NAMES, SEED, SOURCE
+-->
+
+### Context cần chuẩn bị
+
+Lần lượt dùng các prompt tóm tắt sau, hoặc dùng lại context khớp code hiện tại:
+
+1. [sha(text)](#context-m003)
+2. [normalize_text(text)](#context-m009)
+3. [canonical_rows(rows, split)](#context-m010)
+4. [load_raw(split) — phần 3/3](#context-m013)
+
+### Prompt tạo hoặc sửa module
+
+```text
+Viết Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train…. Giữ ràng buộc: SEED=42. Khai báo cùng phần này: SOURCE mô tả đúng dataset và phiên bản được chỉ định trong phần dữ liệu. Dùng lại LABEL_NAMES từ context, không chọn hoặc khai báo lại giá trị. Trả code kèm imports cần dùng; dùng đúng I/O và các lựa chọn đã có trong context.
+
+Context m003 — sha(text):
+[Dán tóm tắt m003]
+
+Context m009 — normalize_text(text):
+[Dán tóm tắt m009]
+
+Context m010 — canonical_rows(rows, split):
+[Dán tóm tắt m010]
+
+Context m013 — load_raw(split) — phần 3/3:
+[Dán tóm tắt m013]
+```
+
+### Tóm tắt context để dùng tiếp
+
+<a id="context-m014"></a>
+
+```text
+Tóm tắt giao diện Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train… từ code dưới đây. Giữ chữ ký, I/O, shape/dtype/device, các tham số đã chọn và trạng thái dùng chung; chỉ trả chữ, không viết lại code hoặc đoán thông tin thiếu.
+
+Context m003 — sha(text):
+[Dán tóm tắt m003]
+
+Context m009 — normalize_text(text):
+[Dán tóm tắt m009]
+
+Context m010 — canonical_rows(rows, split):
+[Dán tóm tắt m010]
+
+Context m013 — load_raw(split) — phần 3/3:
+[Dán tóm tắt m013]
+```
+
+```python
+# Dán code hiện tại của Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train… tại đây.
+```
+
+## Bước 9: Đọc dữ liệu, chuẩn hóa và chia validation
+
+<!-- module
+ID: m015
+Depends: m010, m014
+Kind: code
+Budget: input=800; output=1000; reserve=200
+Summary: yes
+Target: baseline.ipynb#cell=5; lines=95-99
+Summary budget: input=1200; output=500; reserve=300
+Config uses: LABEL_NAMES
+-->
+
+### Context cần chuẩn bị
+
+Lần lượt dùng các prompt tóm tắt sau, hoặc dùng lại context khớp code hiện tại:
+
+1. [canonical_rows(rows, split)](#context-m010)
+2. [Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train…](#context-m014)
+
+### Prompt tạo hoặc sửa module
+
+```text
+Viết Đọc dữ liệu, chuẩn hóa và chia validation. Dùng lại LABEL_NAMES từ context, không chọn hoặc khai báo lại giá trị. Trả code kèm imports cần dùng; dùng đúng I/O và các lựa chọn đã có trong context.
+
+Context m010 — canonical_rows(rows, split):
+[Dán tóm tắt m010]
+
+Context m014 — Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train…:
+[Dán tóm tắt m014]
+```
+
+### Tóm tắt context để dùng tiếp
+
+<a id="context-m015"></a>
+
+```text
+Tóm tắt giao diện Đọc dữ liệu, chuẩn hóa và chia validation từ code dưới đây. Giữ chữ ký, I/O, shape/dtype/device, các tham số đã chọn và trạng thái dùng chung; chỉ trả chữ, không viết lại code hoặc đoán thông tin thiếu.
+
+Context m010 — canonical_rows(rows, split):
+[Dán tóm tắt m010]
+
+Context m014 — Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train…:
+[Dán tóm tắt m014]
+```
+
+```python
+# Dán code hiện tại của Đọc dữ liệu, chuẩn hóa và chia validation tại đây.
+```
+
+## Bước 10: build_features()
+
+<!-- module
+ID: m016
+Depends: none
+Kind: code
+Budget: input=800; output=1000; reserve=200
+Summary: yes
 Target: baseline.ipynb#cell=7; lines=1-8
-Input: Prompt, bản tóm tắt chữ của config, đặc tả chữ: build_features() -> FeatureUnion; WORD_MAX_FEATURES=120000, CHAR_MAX_FEATURES=100000, MIN_DF=2, sublinear_tf=True, dtype=float32; thêm import TfidfVectorizer, FeatureUnion. Không gửi mã nguồn.
-Merge: Lưu riêng phần features để ghép vào bản làm việc theo cell 7, dòng 1–8 của bản đích; giữ các phần đã sinh. Nếu là lát method, nối đúng thứ tự trong cùng class; không chạy khi class còn thiếu phần. Cập nhật caller theo API dưới đây.
-Budget: input=600; output=1100; reserve=300
-Handoff: build_features() -> FeatureUnion; WORD_MAX_FEATURES=120000, CHAR_MAX_FEATURES=100000, MIN_DF=2, sublinear_tf=True, dtype=float32; thêm import TfidfVectorizer, FeatureUnion. Giữ thêm chữ ký/import/cấu hình từ các phụ thuộc còn được caller dùng; chỉ tóm tắt chữ, đối chiếu với code vừa sinh.
-### Prompt
-Thay build_features bằng FeatureUnion TF-IDF word 1–2 và char_wb 3–5, trọng số 1 và 0.5; chỉ fit train. Trả riêng code phần này và tóm tắt API ngắn cho phiên sau.
+Summary budget: input=1200; output=500; reserve=300
+Config owns: CHAR_MAX_FEATURES, MIN_DF, WORD_MAX_FEATURES
+Config uses: CHAR_MAX_FEATURES, MIN_DF, WORD_MAX_FEATURES
+-->
 
-## Bước 5: Log-ratio NB train-only
-ID: ratio
-Depends: features
+### Prompt tạo hoặc sửa module
+
+```text
+Viết build_features(). Kết hợp TF-IDF word và char_wb bằng FeatureUnion, chỉ fit train; tự chọn ngram_range và trọng số hai nhánh phù hợp. Tự chọn CHAR_MAX_FEATURES, MIN_DF, WORD_MAX_FEATURES phù hợp và khai báo ngay trong module này; nêu ngắn lý do. Trả code kèm imports cần dùng; dùng đúng I/O và các lựa chọn đã có trong context.
+```
+
+### Tóm tắt context để dùng tiếp
+
+<a id="context-m016"></a>
+
+```text
+Tóm tắt giao diện build_features() từ code dưới đây. Giữ chữ ký, I/O, shape/dtype/device, các tham số đã chọn và trạng thái dùng chung; chỉ trả chữ, không viết lại code hoặc đoán thông tin thiếu.
+```
+
+```python
+# Dán code hiện tại của build_features() tại đây.
+```
+
+## Bước 11: Biểu diễn văn bản chỉ học trên train — X_train, X_val, features…
+
+<!-- module
+ID: m017
+Depends: m014, m016
 Kind: code
+Budget: input=800; output=1000; reserve=200
+Summary: yes
 Target: baseline.ipynb#cell=7; lines=10-23
-Input: Prompt, bản tóm tắt chữ của features, đặc tả chữ: X_train/X_val: CSR[N,D]; ratio: float32[D], y_train có 0/1; USE_NB_RATIO=True, NB_RATIO_ALPHA=1; không fit/ước lượng từ validation/test. Không gửi mã nguồn.
-Merge: Lưu riêng phần ratio để ghép vào bản làm việc theo cell 7, dòng 10–23 của bản đích; giữ các phần đã sinh. Nếu là lát method, nối đúng thứ tự trong cùng class; không chạy khi class còn thiếu phần. Cập nhật caller theo API dưới đây.
-Budget: input=600; output=1100; reserve=300
-Handoff: X_train/X_val: CSR[N,D]; ratio: float32[D], y_train có 0/1; USE_NB_RATIO=True, NB_RATIO_ALPHA=1; không fit/ước lượng từ validation/test. Giữ thêm chữ ký/import/cấu hình từ các phụ thuộc còn được caller dùng; chỉ tóm tắt chữ, đối chiếu với code vừa sinh.
-### Prompt
-Tạo NB log-ratio nhị phân từ presence train với smoothing 1; nhân cùng ratio vào CSR train và validation. Trả riêng code phần này và tóm tắt API ngắn cho phiên sau.
+Summary budget: input=1200; output=500; reserve=300
+Config owns: NB_RATIO_ALPHA, USE_NB_RATIO
+Config uses: NB_RATIO_ALPHA, USE_NB_RATIO
+-->
 
-## Bước 6: LinearSVC scratch
-ID: classifier
-Depends: ratio
+### Context cần chuẩn bị
+
+Lần lượt dùng các prompt tóm tắt sau, hoặc dùng lại context khớp code hiện tại:
+
+1. [Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train…](#context-m014)
+2. [build_features()](#context-m016)
+
+### Prompt tạo hoặc sửa module
+
+```text
+Viết Biểu diễn văn bản chỉ học trên train — X_train, X_val, features…. Tạo NB log-ratio nhị phân từ presence train với smoothing dương được chọn phù hợp; nhân cùng ratio vào CSR train và validation. Giữ ràng buộc: USE_NB_RATIO=True. Tự chọn NB_RATIO_ALPHA phù hợp và khai báo ngay trong module này; nêu ngắn lý do. Trả code kèm imports cần dùng; dùng đúng I/O và các lựa chọn đã có trong context.
+
+Context m014 — Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train…:
+[Dán tóm tắt m014]
+
+Context m016 — build_features():
+[Dán tóm tắt m016]
+```
+
+### Tóm tắt context để dùng tiếp
+
+<a id="context-m017"></a>
+
+```text
+Tóm tắt giao diện Biểu diễn văn bản chỉ học trên train — X_train, X_val, features… từ code dưới đây. Giữ chữ ký, I/O, shape/dtype/device, các tham số đã chọn và trạng thái dùng chung; chỉ trả chữ, không viết lại code hoặc đoán thông tin thiếu.
+
+Context m014 — Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train…:
+[Dán tóm tắt m014]
+
+Context m016 — build_features():
+[Dán tóm tắt m016]
+```
+
+```python
+# Dán code hiện tại của Biểu diễn văn bản chỉ học trên train — X_train, X_val, features… tại đây.
+```
+
+## Bước 12: make_classifier(parameter)
+
+<!-- module
+ID: m019
+Depends: m014
 Kind: code
+Budget: input=800; output=1000; reserve=200
+Summary: yes
 Target: baseline.ipynb#cell=9; lines=2-4
-Input: Prompt, bản tóm tắt chữ của ratio, đặc tả chữ: make_classifier(parameter) -> LinearSVC(C=parameter, dual=True, max_iter=10000, tol=1e-4, random_state=42); import LinearSVC, ConvergenceWarning, warnings; train fit trên CSR đã nhân ratio. Không gửi mã nguồn.
-Merge: Lưu riêng phần classifier để ghép vào bản làm việc theo cell 9, dòng 2–4 của bản đích; giữ các phần đã sinh. Nếu là lát method, nối đúng thứ tự trong cùng class; không chạy khi class còn thiếu phần. Cập nhật caller theo API dưới đây.
-Budget: input=600; output=1100; reserve=300
-Handoff: make_classifier(parameter) -> LinearSVC(C=parameter, dual=True, max_iter=10000, tol=1e-4, random_state=42); import LinearSVC, ConvergenceWarning, warnings; train fit trên CSR đã nhân ratio. Giữ thêm chữ ký/import/cấu hình từ các phụ thuộc còn được caller dùng; chỉ tóm tắt chữ, đối chiếu với code vừa sinh.
-### Prompt
-Thay make_classifier(parameter) bằng LinearSVC, giữ interface và xử lý lỗi không hội tụ. Trả riêng code phần này và tóm tắt API ngắn cho phiên sau.
+Summary budget: input=1200; output=500; reserve=300
+Config owns: MAX_ITER, TOLERANCE
+Config uses: MAX_ITER, SEED, TOLERANCE
+-->
 
-## Bước 7: Chọn C bằng macro-F1
-ID: selection
-Depends: classifier
-Kind: code
-Target: baseline.ipynb#cell=9; lines=10-25
-Input: Prompt, bản tóm tắt chữ của classifier, đặc tả chữ: PARAMETERS=C_VALUES=(0.25,1.0,4.0); classification_metrics(y,pred)->macro_f1,accuracy; joblib lưu features,ratio,classifier,label_names,validation, không fit lại train+validation. Không gửi mã nguồn.
-Merge: Lưu riêng phần selection để ghép vào bản làm việc theo cell 9, dòng 10–25 của bản đích; giữ các phần đã sinh. Nếu là lát method, nối đúng thứ tự trong cùng class; không chạy khi class còn thiếu phần. Cập nhật caller theo API dưới đây.
-Budget: input=600; output=1100; reserve=300
-Handoff: PARAMETERS=C_VALUES=(0.25,1.0,4.0); classification_metrics(y,pred)->macro_f1,accuracy; joblib lưu features,ratio,classifier,label_names,validation, không fit lại train+validation. Giữ thêm chữ ký/import/cấu hình từ các phụ thuộc còn được caller dùng; chỉ tóm tắt chữ, đối chiếu với code vừa sinh.
-### Prompt
-Đổi vòng chọn mô hình sang C bằng 0.25, 1 và 4, tối đa hóa macro-F1 validation; lưu pipeline tốt nhất. Trả riêng code phần này và tóm tắt API ngắn cho phiên sau.
+### Context cần chuẩn bị
 
-## Bước 8: Reload và dự đoán
-ID: prediction
-Depends: selection
-Kind: code
-Target: baseline.ipynb#cell=11; lines=4-7
-Input: Prompt, bản tóm tắt chữ của selection, đặc tả chữ: predict_texts(list[str])->nhãn int[N]; normalize_text rồi features.transform().multiply(ratio).tocsr(); IDs và official test giữ nguyên; không học thêm vocabulary. Không gửi mã nguồn.
-Merge: Lưu riêng phần prediction để ghép vào bản làm việc theo cell 11, dòng 4–7 của bản đích; giữ các phần đã sinh. Nếu là lát method, nối đúng thứ tự trong cùng class; không chạy khi class còn thiếu phần. Cập nhật caller theo API dưới đây.
-Budget: input=600; output=1100; reserve=300
-Handoff: predict_texts(list[str])->nhãn int[N]; normalize_text rồi features.transform().multiply(ratio).tocsr(); IDs và official test giữ nguyên; không học thêm vocabulary. Giữ thêm chữ ký/import/cấu hình từ các phụ thuộc còn được caller dùng; chỉ tóm tắt chữ, đối chiếu với code vừa sinh.
-### Prompt
-Giữ predict_texts(texts), reload features, ratio và classifier; đối chiếu validation trước khi chấm test. Trả riêng code phần này và tóm tắt API ngắn cho phiên sau.
+Lần lượt dùng các prompt tóm tắt sau, hoặc dùng lại context khớp code hiện tại:
 
-## Bước 9: Nối Dataset và DataLoader
-ID: loaders
-Depends: splits, config, features, ratio, classifier, selection, prediction
-Kind: code
-Target: baseline.ipynb#cell=7; lines=1-6
-Input: Prompt, bản tóm tắt chữ của splits, config, features, ratio, classifier, selection, prediction, đặc tả chữ: train_text/val_text: list[str]; y_train/y_val: int64[N]; nhãn [neg,pos]; dữ liệu thưa CSR; không cần GPU. Vòng C fit sklearn trên train, không epochs/backprop; chọn macro_f1 validation tăng; joblib đủ features,ratio,classifier,label_names,validation. Dùng seed42, num_workers0; định nghĩa to_device giữ lengths CPU nếu cần. Không gửi mã nguồn.
-Merge: Lưu riêng phần loaders để ghép vào bản làm việc theo cell 7, dòng 1–6 của bản đích; giữ các phần đã sinh. Nếu là lát method, nối đúng thứ tự trong cùng class; không chạy khi class còn thiếu phần. Cập nhật caller theo API dưới đây.
-Budget: input=600; output=1100; reserve=300
-Handoff: train_text/val_text: list[str]; y_train/y_val: int64[N]; nhãn [neg,pos]; dữ liệu thưa CSR; không cần GPU. Vòng C fit sklearn trên train, không epochs/backprop; chọn macro_f1 validation tăng; joblib đủ features,ratio,classifier,label_names,validation. Dùng seed42, num_workers0; định nghĩa to_device giữ lengths CPU nếu cần. Giữ thêm chữ ký/import/cấu hình từ các phụ thuộc còn được caller dùng; chỉ tóm tắt chữ, đối chiếu với code vừa sinh.
-### Prompt
-Tạo train_text, val_text và y_train,y_val từ split đã chốt để pipeline sparse dùng trực tiếp. Trả riêng code phần này và tóm tắt API ngắn cho phiên sau.
+1. [Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train…](#context-m014)
 
-## Bước 10: Metric chính thức và evaluation
-ID: metrics
-Depends: loaders
+### Prompt tạo hoặc sửa module
+
+```text
+Viết make_classifier(parameter). Tạo classifier LinearSVC theo API đã chốt; kiểm hội tụ và dùng cấu hình lựa chọn trên validation. Tự chọn MAX_ITER, TOLERANCE phù hợp và khai báo ngay trong module này; nêu ngắn lý do. Dùng lại SEED từ context, không chọn hoặc khai báo lại giá trị. Trả code kèm imports cần dùng; dùng đúng I/O và các lựa chọn đã có trong context.
+
+Context m014 — Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train…:
+[Dán tóm tắt m014]
+```
+
+### Tóm tắt context để dùng tiếp
+
+<a id="context-m019"></a>
+
+```text
+Tóm tắt giao diện make_classifier(parameter) từ code dưới đây. Giữ chữ ký, I/O, shape/dtype/device, các tham số đã chọn và trạng thái dùng chung; chỉ trả chữ, không viết lại code hoặc đoán thông tin thiếu.
+
+Context m014 — Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train…:
+[Dán tóm tắt m014]
+```
+
+```python
+# Dán code hiện tại của make_classifier(parameter) tại đây.
+```
+
+## Bước 13: classification_metrics(y, pred)
+
+<!-- module
+ID: m020
+Depends: m010
 Kind: code
+Budget: input=800; output=1000; reserve=200
+Summary: yes
 Target: baseline.ipynb#cell=9; lines=6-8
-Input: Prompt, bản tóm tắt chữ của loaders, đặc tả chữ: macro-F1 và accuracy sklearn, labels=[0,1], zero_division=0; kết quả test không dùng chọn C. train_text/val_text: list[str]; y_train/y_val: int64[N]; nhãn [neg,pos]; dữ liệu thưa CSR; không cần GPU. classification_metrics(y,pred) giữ interface hiện tại. Không gửi mã nguồn.
-Merge: Lưu riêng phần metrics để ghép vào bản làm việc theo cell 9, dòng 6–8 của bản đích; giữ các phần đã sinh. Nếu là lát method, nối đúng thứ tự trong cùng class; không chạy khi class còn thiếu phần. Cập nhật caller theo API dưới đây.
-Budget: input=600; output=1100; reserve=300
-Handoff: macro-F1 và accuracy sklearn, labels=[0,1], zero_division=0; kết quả test không dùng chọn C. train_text/val_text: list[str]; y_train/y_val: int64[N]; nhãn [neg,pos]; dữ liệu thưa CSR; không cần GPU. classification_metrics(y,pred) giữ interface hiện tại. Giữ thêm chữ ký/import/cấu hình từ các phụ thuộc còn được caller dùng; chỉ tóm tắt chữ, đối chiếu với code vừa sinh.
-### Prompt
-Viết classification_metrics(y,pred) trả macro_f1 và accuracy, giữ đủ nhãn và zero_division bằng0. Trả riêng code phần này và tóm tắt API ngắn cho phiên sau.
+Summary budget: input=1200; output=500; reserve=300
+Config uses: LABEL_NAMES
+-->
 
-## Bước 11: Huấn luyện hoặc fit và chọn checkpoint
-ID: training
-Depends: metrics
-Kind: code
-Target: baseline.ipynb#cell=9; lines=10-25
-Input: Prompt, bản tóm tắt chữ của metrics, đặc tả chữ: Vòng C fit sklearn trên train, không epochs/backprop; chọn macro_f1 validation tăng; joblib đủ features,ratio,classifier,label_names,validation. macro-F1 và accuracy sklearn, labels=[0,1], zero_division=0; kết quả test không dùng chọn C. Checkpoint PyTorch chỉ lưu model_state,tokenizer và epoch cần thiết; sparse dùng joblib pipeline; không resume state. Caller loss/evaluate theo tóm tắt. Không gửi mã nguồn.
-Merge: Lưu riêng phần training để ghép vào bản làm việc theo cell 9, dòng 10–25 của bản đích; giữ các phần đã sinh. Nếu là lát method, nối đúng thứ tự trong cùng class; không chạy khi class còn thiếu phần. Cập nhật caller theo API dưới đây.
-Budget: input=600; output=1100; reserve=300
-Handoff: Vòng C fit sklearn trên train, không epochs/backprop; chọn macro_f1 validation tăng; joblib đủ features,ratio,classifier,label_names,validation. macro-F1 và accuracy sklearn, labels=[0,1], zero_division=0; kết quả test không dùng chọn C. Checkpoint PyTorch chỉ lưu model_state,tokenizer và epoch cần thiết; sparse dùng joblib pipeline; không resume state. Caller loss/evaluate theo tóm tắt. Giữ thêm chữ ký/import/cấu hình từ các phụ thuộc còn được caller dùng; chỉ tóm tắt chữ, đối chiếu với code vừa sinh.
-### Prompt
-Viết vòng fit và chọn pipeline theo macro-F1 validation, lưu đủ thành phần suy luận bằng joblib. Trả riêng code phần này và tóm tắt API ngắn cho phiên sau.
+### Context cần chuẩn bị
 
-## Bước 12: Reload pipeline và đánh giá cuối
-ID: reload
-Depends: training
-Kind: code
-Target: baseline.ipynb#cell=11; lines=1-12
-Input: Prompt, bản tóm tắt chữ của training, đặc tả chữ: macro-F1 và accuracy sklearn, labels=[0,1], zero_division=0; kết quả test không dùng chọn C. train_text/val_text: list[str]; y_train/y_val: int64[N]; nhãn [neg,pos]; dữ liệu thưa CSR; không cần GPU. Reload tokenizer/vocabulary rồi build model cùng cfg; visual pretrained không tải lại khi initialize_pretrained=False; không đổi official split hoặc fit lại. Không gửi mã nguồn.
-Merge: Lưu riêng phần reload để ghép vào bản làm việc theo cell 11, dòng 1–12 của bản đích; giữ các phần đã sinh. Nếu là lát method, nối đúng thứ tự trong cùng class; không chạy khi class còn thiếu phần. Cập nhật caller theo API dưới đây.
-Budget: input=600; output=1100; reserve=300
-Handoff: macro-F1 và accuracy sklearn, labels=[0,1], zero_division=0; kết quả test không dùng chọn C. train_text/val_text: list[str]; y_train/y_val: int64[N]; nhãn [neg,pos]; dữ liệu thưa CSR; không cần GPU. Reload tokenizer/vocabulary rồi build model cùng cfg; visual pretrained không tải lại khi initialize_pretrained=False; không đổi official split hoặc fit lại. Giữ thêm chữ ký/import/cấu hình từ các phụ thuộc còn được caller dùng; chỉ tóm tắt chữ, đối chiếu với code vừa sinh.
-### Prompt
-Viết phần reload đầy đủ preprocessing và model đã chọn, kiểm lại validation trước khi chấm held-out đúng một lần. Trả riêng code phần này và tóm tắt API ngắn cho phiên sau.
+Lần lượt dùng các prompt tóm tắt sau, hoặc dùng lại context khớp code hiện tại:
 
-## Bước 13: Suy luận đầu vào mới
-ID: inference
-Depends: reload
+1. [canonical_rows(rows, split)](#context-m010)
+
+### Prompt tạo hoặc sửa module
+
+```text
+Viết classification_metrics(y, pred). Viết classification_metrics(y,pred) trả macro_f1 và accuracy, giữ đủ nhãn và zero_division bằng0. macro-F1 và accuracy sklearn, labels=[0,1], zero_division=0; kết quả test không dùng chọn C. classification_metrics(y,pred) giữ interface hiện tại. Kết quả giữ các trường accuracy, macro_f1. Dùng lại LABEL_NAMES từ context, không chọn hoặc khai báo lại giá trị. Trả code kèm imports cần dùng; dùng đúng I/O và các lựa chọn đã có trong context.
+
+Context m010 — canonical_rows(rows, split):
+[Dán tóm tắt m010]
+```
+
+### Tóm tắt context để dùng tiếp
+
+<a id="context-m020"></a>
+
+```text
+Tóm tắt giao diện classification_metrics(y, pred) từ code dưới đây. Giữ chữ ký, I/O, shape/dtype/device, các tham số đã chọn và trạng thái dùng chung; chỉ trả chữ, không viết lại code hoặc đoán thông tin thiếu.
+
+Context m010 — canonical_rows(rows, split):
+[Dán tóm tắt m010]
+```
+
+```python
+# Dán code hiện tại của classification_metrics(y, pred) tại đây.
+```
+
+## Bước 14: Mô hình, huấn luyện và chọn checkpoint — CHECKPOINT_PATH, best_score, classifier…
+
+<!-- module
+ID: m021
+Depends: m010, m014, m017, m019, m020
 Kind: code
+Budget: input=800; output=1000; reserve=200
+Summary: yes
+Target: baseline.ipynb#cell=9; lines=10-35
+Summary budget: input=1200; output=500; reserve=300
+Config owns: C_VALUES, OUTPUT_DIR, PARAMETERS, PRIMARY_METRIC
+Config uses: C_VALUES, LABEL_NAMES, OUTPUT_DIR, PARAMETERS, PRIMARY_METRIC
+-->
+
+### Context cần chuẩn bị
+
+Lần lượt dùng các prompt tóm tắt sau, hoặc dùng lại context khớp code hiện tại:
+
+1. [canonical_rows(rows, split)](#context-m010)
+2. [Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train…](#context-m014)
+3. [Biểu diễn văn bản chỉ học trên train — X_train, X_val, features…](#context-m017)
+4. [make_classifier(parameter)](#context-m019)
+5. [classification_metrics(y, pred)](#context-m020)
+
+### Prompt tạo hoặc sửa module
+
+```text
+Viết Mô hình, huấn luyện và chọn checkpoint — CHECKPOINT_PATH, best_score, classifier…. Fit pipeline trên train theo các ứng viên siêu tham số được chọn; chọn bằng metric validation và lưu đủ biểu diễn, classifier và nhãn để reload. Không fit lại trên test hoặc train+validation. Giữ ràng buộc: PRIMARY_METRIC='macro_f1'. Tự chọn C_VALUES phù hợp và khai báo ngay trong module này; nêu ngắn lý do. Khai báo cùng phần này: OUTPUT_DIR được suy ra từ dữ liệu/context hoặc API tương ứng; PARAMETERS được suy ra từ dữ liệu/context hoặc API tương ứng. Dùng lại LABEL_NAMES từ context, không chọn hoặc khai báo lại giá trị. Trả code kèm imports cần dùng; dùng đúng I/O và các lựa chọn đã có trong context.
+
+Context m010 — canonical_rows(rows, split):
+[Dán tóm tắt m010]
+
+Context m014 — Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train…:
+[Dán tóm tắt m014]
+
+Context m017 — Biểu diễn văn bản chỉ học trên train — X_train, X_val, features…:
+[Dán tóm tắt m017]
+
+Context m019 — make_classifier(parameter):
+[Dán tóm tắt m019]
+
+Context m020 — classification_metrics(y, pred):
+[Dán tóm tắt m020]
+```
+
+### Tóm tắt context để dùng tiếp
+
+<a id="context-m021"></a>
+
+```text
+Tóm tắt giao diện Mô hình, huấn luyện và chọn checkpoint — CHECKPOINT_PATH, best_score, classifier… từ code dưới đây. Giữ chữ ký, I/O, shape/dtype/device, các tham số đã chọn và trạng thái dùng chung; chỉ trả chữ, không viết lại code hoặc đoán thông tin thiếu.
+
+Context m010 — canonical_rows(rows, split):
+[Dán tóm tắt m010]
+
+Context m014 — Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train…:
+[Dán tóm tắt m014]
+
+Context m017 — Biểu diễn văn bản chỉ học trên train — X_train, X_val, features…:
+[Dán tóm tắt m017]
+
+Context m019 — make_classifier(parameter):
+[Dán tóm tắt m019]
+
+Context m020 — classification_metrics(y, pred):
+[Dán tóm tắt m020]
+```
+
+```python
+# Dán code hiện tại của Mô hình, huấn luyện và chọn checkpoint — CHECKPOINT_PATH, best_score, classifier… tại đây.
+```
+
+## Bước 15: Nạp lại, đánh giá test một lần và dự đoán — best
+
+<!-- module
+ID: m022
+Depends: m021
+Kind: code
+Budget: input=800; output=1000; reserve=200
+Summary: yes
+Target: baseline.ipynb#cell=11; lines=2-2
+Summary budget: input=1200; output=500; reserve=300
+-->
+
+### Context cần chuẩn bị
+
+Lần lượt dùng các prompt tóm tắt sau, hoặc dùng lại context khớp code hiện tại:
+
+1. [Mô hình, huấn luyện và chọn checkpoint — CHECKPOINT_PATH, best_score, classifier…](#context-m021)
+
+### Prompt tạo hoặc sửa module
+
+```text
+Viết Nạp lại, đánh giá test một lần và dự đoán — best. Reload toàn bộ pipeline đã chọn, khôi phục cấu hình kiến trúc và tokenizer/vocabulary từ checkpoint hoặc context tương ứng; kiểm lại validation rồi đánh giá held-out đúng giao thức, không chọn lại tham số. Trả code kèm imports cần dùng; dùng đúng I/O và các lựa chọn đã có trong context.
+
+Context m021 — Mô hình, huấn luyện và chọn checkpoint — CHECKPOINT_PATH, best_score, classifier…:
+[Dán tóm tắt m021]
+```
+
+### Tóm tắt context để dùng tiếp
+
+<a id="context-m022"></a>
+
+```text
+Tóm tắt giao diện Nạp lại, đánh giá test một lần và dự đoán — best từ code dưới đây. Giữ chữ ký, I/O, shape/dtype/device, các tham số đã chọn và trạng thái dùng chung; chỉ trả chữ, không viết lại code hoặc đoán thông tin thiếu.
+
+Context m021 — Mô hình, huấn luyện và chọn checkpoint — CHECKPOINT_PATH, best_score, classifier…:
+[Dán tóm tắt m021]
+```
+
+```python
+# Dán code hiện tại của Nạp lại, đánh giá test một lần và dự đoán — best tại đây.
+```
+
+## Bước 16: predict_texts(texts)
+
+<!-- module
+ID: m023
+Depends: m009, m022
+Kind: code
+Budget: input=800; output=1000; reserve=200
+Summary: yes
 Target: baseline.ipynb#cell=11; lines=4-7
-Input: Prompt, bản tóm tắt chữ của reload, đặc tả chữ: train_text/val_text: list[str]; y_train/y_val: int64[N]; nhãn [neg,pos]; dữ liệu thưa CSR; không cần GPU. macro-F1 và accuracy sklearn, labels=[0,1], zero_division=0; kết quả test không dùng chọn C. Hàm predict_texts nhận (texts), giữ chữ ký và output schema đã chốt, không cần gold. Không gửi mã nguồn.
-Merge: Lưu riêng phần inference để ghép vào bản làm việc theo cell 11, dòng 4–7 của bản đích; giữ các phần đã sinh. Nếu là lát method, nối đúng thứ tự trong cùng class; không chạy khi class còn thiếu phần. Cập nhật caller theo API dưới đây.
-Budget: input=600; output=1100; reserve=300
-Handoff: train_text/val_text: list[str]; y_train/y_val: int64[N]; nhãn [neg,pos]; dữ liệu thưa CSR; không cần GPU. macro-F1 và accuracy sklearn, labels=[0,1], zero_division=0; kết quả test không dùng chọn C. Hàm predict_texts nhận (texts), giữ chữ ký và output schema đã chốt, không cần gold. Giữ thêm chữ ký/import/cấu hình từ các phụ thuộc còn được caller dùng; chỉ tóm tắt chữ, đối chiếu với code vừa sinh.
-### Prompt
-Viết hàm dự đoán đầu vào mới theo API đã chốt, dùng pipeline reload và giữ đúng schema đầu ra. Trả riêng code phần này và tóm tắt API ngắn cho phiên sau.
+Summary budget: input=1200; output=500; reserve=300
+-->
 
-## Bước 14: Gộp hợp đồng cho phiên ghép
-ID: summary
-Depends: inference
-Kind: summary
-Input: Prompt và bản tóm tắt chữ đã đối chiếu của inference; không gửi code hay lịch sử phiên trước. Chỉ giữ API/cấu hình mà phần ghép cuối cần.
-Merge: Dùng bản tóm tắt chữ cho phiên tích hợp kế tiếp; đối chiếu với code lưu cục bộ, không thay code đã sinh.
-Budget: input=600; output=1100; reserve=300
-Handoff: Chỉ exports và config được glue/integration dùng; interface,shape/dtype,IDs,mask,metric và thứ tự gọi; giới hạn250 tokens, không code. Giữ thêm chữ ký/import/cấu hình từ các phụ thuộc còn được caller dùng; chỉ tóm tắt chữ, đối chiếu với code vừa sinh.
-### Prompt
-Gộp các bản tóm tắt thành hợp đồng tích hợp ngắn, giữ chữ ký API, kiểu/shape, cấu hình và ràng buộc cần dùng. Chỉ trả bản tóm tắt chữ tối đa 250 tokens, bỏ chi tiết nội bộ và không dựng lại code.
+### Context cần chuẩn bị
 
-## Bước 15: Ghép và kiểm tra tối thiểu
+Lần lượt dùng các prompt tóm tắt sau, hoặc dùng lại context khớp code hiện tại:
+
+1. [normalize_text(text)](#context-m009)
+2. [Nạp lại, đánh giá test một lần và dự đoán — best](#context-m022)
+
+### Prompt tạo hoặc sửa module
+
+```text
+Viết predict_texts(texts). Giữ predict_texts(texts), reload features, ratio và classifier; đối chiếu validation trước khi chấm test. Viết phần reload đầy đủ preprocessing và model đã chọn, kiểm lại validation trước khi chấm held-out đúng một lần. macro-F1 và accuracy sklearn, labels=[0,1], zero_division=0; kết quả test không dùng chọn C. Trả code kèm imports cần dùng; dùng đúng I/O và các lựa chọn đã có trong context.
+
+Context m009 — normalize_text(text):
+[Dán tóm tắt m009]
+
+Context m022 — Nạp lại, đánh giá test một lần và dự đoán — best:
+[Dán tóm tắt m022]
+```
+
+### Tóm tắt context để dùng tiếp
+
+<a id="context-m023"></a>
+
+```text
+Tóm tắt giao diện predict_texts(texts) từ code dưới đây. Giữ chữ ký, I/O, shape/dtype/device, các tham số đã chọn và trạng thái dùng chung; chỉ trả chữ, không viết lại code hoặc đoán thông tin thiếu.
+
+Context m009 — normalize_text(text):
+[Dán tóm tắt m009]
+
+Context m022 — Nạp lại, đánh giá test một lần và dự đoán — best:
+[Dán tóm tắt m022]
+```
+
+```python
+# Dán code hiện tại của predict_texts(texts) tại đây.
+```
+
+## Bước 17: Nạp lại, đánh giá test một lần và dự đoán — overlap, raw_test, reloaded_val…
+
+<!-- module
+ID: m024
+Depends: m003, m009, m010, m013, m014, m020, m021, m022, m023
+Kind: code
+Budget: input=800; output=1000; reserve=200
+Summary: yes
+Target: baseline.ipynb#cell=11; lines=10-29
+Summary budget: input=1200; output=500; reserve=300
+Config uses: LABEL_NAMES, PRIMARY_METRIC
+-->
+
+### Context cần chuẩn bị
+
+Lần lượt dùng các prompt tóm tắt sau, hoặc dùng lại context khớp code hiện tại:
+
+1. [sha(text)](#context-m003)
+2. [normalize_text(text)](#context-m009)
+3. [canonical_rows(rows, split)](#context-m010)
+4. [load_raw(split) — phần 3/3](#context-m013)
+5. [Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train…](#context-m014)
+6. [classification_metrics(y, pred)](#context-m020)
+7. [Mô hình, huấn luyện và chọn checkpoint — CHECKPOINT_PATH, best_score, classifier…](#context-m021)
+8. [Nạp lại, đánh giá test một lần và dự đoán — best](#context-m022)
+9. [predict_texts(texts)](#context-m023)
+
+### Prompt tạo hoặc sửa module
+
+```text
+Viết Nạp lại, đánh giá test một lần và dự đoán — overlap, raw_test, reloaded_val…. Dùng pipeline đã reload để kiểm validation, chấm held-out theo đúng ID và metric, lưu đủ predictions/kết quả; không fit lại hoặc chọn tham số bằng test. Dùng lại LABEL_NAMES, PRIMARY_METRIC từ context, không chọn hoặc khai báo lại giá trị. Trả code kèm imports cần dùng; dùng đúng I/O và các lựa chọn đã có trong context.
+
+Context m003 — sha(text):
+[Dán tóm tắt m003]
+
+Context m009 — normalize_text(text):
+[Dán tóm tắt m009]
+
+Context m010 — canonical_rows(rows, split):
+[Dán tóm tắt m010]
+
+Context m013 — load_raw(split) — phần 3/3:
+[Dán tóm tắt m013]
+
+Context m014 — Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train…:
+[Dán tóm tắt m014]
+
+Context m020 — classification_metrics(y, pred):
+[Dán tóm tắt m020]
+
+Context m021 — Mô hình, huấn luyện và chọn checkpoint — CHECKPOINT_PATH, best_score, classifier…:
+[Dán tóm tắt m021]
+
+Context m022 — Nạp lại, đánh giá test một lần và dự đoán — best:
+[Dán tóm tắt m022]
+
+Context m023 — predict_texts(texts):
+[Dán tóm tắt m023]
+```
+
+### Tóm tắt context để dùng tiếp
+
+<a id="context-m024"></a>
+
+```text
+Tóm tắt giao diện Nạp lại, đánh giá test một lần và dự đoán — overlap, raw_test, reloaded_val… từ code dưới đây. Giữ chữ ký, I/O, shape/dtype/device, các tham số đã chọn và trạng thái dùng chung; chỉ trả chữ, không viết lại code hoặc đoán thông tin thiếu.
+
+Context m003 — sha(text):
+[Dán tóm tắt m003]
+
+Context m009 — normalize_text(text):
+[Dán tóm tắt m009]
+
+Context m010 — canonical_rows(rows, split):
+[Dán tóm tắt m010]
+
+Context m013 — load_raw(split) — phần 3/3:
+[Dán tóm tắt m013]
+
+Context m014 — Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train…:
+[Dán tóm tắt m014]
+
+Context m020 — classification_metrics(y, pred):
+[Dán tóm tắt m020]
+
+Context m021 — Mô hình, huấn luyện và chọn checkpoint — CHECKPOINT_PATH, best_score, classifier…:
+[Dán tóm tắt m021]
+
+Context m022 — Nạp lại, đánh giá test một lần và dự đoán — best:
+[Dán tóm tắt m022]
+
+Context m023 — predict_texts(texts):
+[Dán tóm tắt m023]
+```
+
+```python
+# Dán code hiện tại của Nạp lại, đánh giá test một lần và dự đoán — overlap, raw_test, reloaded_val… tại đây.
+```
+
+## Bước 18: Nạp lại, đánh giá test một lần và dự đoán — f, pred, row
+
+<!-- module
+ID: m025
+Depends: m010, m014, m021, m022, m023, m024
+Kind: code
+Budget: input=800; output=1000; reserve=200
+Summary: yes
+Target: baseline.ipynb#cell=11; lines=30-38
+Summary budget: input=1200; output=500; reserve=300
+Config owns: VERSIONS
+Config uses: LABEL_NAMES, OUTPUT_DIR, VERSIONS
+-->
+
+### Context cần chuẩn bị
+
+Lần lượt dùng các prompt tóm tắt sau, hoặc dùng lại context khớp code hiện tại:
+
+1. [canonical_rows(rows, split)](#context-m010)
+2. [Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train…](#context-m014)
+3. [Mô hình, huấn luyện và chọn checkpoint — CHECKPOINT_PATH, best_score, classifier…](#context-m021)
+4. [Nạp lại, đánh giá test một lần và dự đoán — best](#context-m022)
+5. [predict_texts(texts)](#context-m023)
+6. [Nạp lại, đánh giá test một lần và dự đoán — overlap, raw_test, reloaded_val…](#context-m024)
+
+### Prompt tạo hoặc sửa module
+
+```text
+Viết Nạp lại, đánh giá test một lần và dự đoán — f, pred, row. Dùng pipeline đã reload để kiểm validation, chấm held-out theo đúng ID và metric, lưu đủ predictions/kết quả; không fit lại hoặc chọn tham số bằng test. Khai báo cùng phần này: VERSIONS được suy ra từ dữ liệu/context hoặc API tương ứng. Dùng lại LABEL_NAMES, OUTPUT_DIR từ context, không chọn hoặc khai báo lại giá trị. Trả code kèm imports cần dùng; dùng đúng I/O và các lựa chọn đã có trong context.
+
+Context m010 — canonical_rows(rows, split):
+[Dán tóm tắt m010]
+
+Context m014 — Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train…:
+[Dán tóm tắt m014]
+
+Context m021 — Mô hình, huấn luyện và chọn checkpoint — CHECKPOINT_PATH, best_score, classifier…:
+[Dán tóm tắt m021]
+
+Context m022 — Nạp lại, đánh giá test một lần và dự đoán — best:
+[Dán tóm tắt m022]
+
+Context m023 — predict_texts(texts):
+[Dán tóm tắt m023]
+
+Context m024 — Nạp lại, đánh giá test một lần và dự đoán — overlap, raw_test, reloaded_val…:
+[Dán tóm tắt m024]
+```
+
+### Tóm tắt context để dùng tiếp
+
+<a id="context-m025"></a>
+
+```text
+Tóm tắt giao diện Nạp lại, đánh giá test một lần và dự đoán — f, pred, row từ code dưới đây. Giữ chữ ký, I/O, shape/dtype/device, các tham số đã chọn và trạng thái dùng chung; chỉ trả chữ, không viết lại code hoặc đoán thông tin thiếu.
+
+Context m010 — canonical_rows(rows, split):
+[Dán tóm tắt m010]
+
+Context m014 — Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train…:
+[Dán tóm tắt m014]
+
+Context m021 — Mô hình, huấn luyện và chọn checkpoint — CHECKPOINT_PATH, best_score, classifier…:
+[Dán tóm tắt m021]
+
+Context m022 — Nạp lại, đánh giá test một lần và dự đoán — best:
+[Dán tóm tắt m022]
+
+Context m023 — predict_texts(texts):
+[Dán tóm tắt m023]
+
+Context m024 — Nạp lại, đánh giá test một lần và dự đoán — overlap, raw_test, reloaded_val…:
+[Dán tóm tắt m024]
+```
+
+```python
+# Dán code hiện tại của Nạp lại, đánh giá test một lần và dự đoán — f, pred, row tại đây.
+```
+
+## Bước 19: Kiểm tra kết nối các module
+
+<!-- module
 ID: integration
-Depends: summary
+Depends: m015, m025
 Kind: integration
-Target: baseline.ipynb#cell=11; lines=1-12
-Input: Prompt, bản tóm tắt chữ của summary, đặc tả chữ: train_text/val_text: list[str]; y_train/y_val: int64[N]; nhãn [neg,pos]; dữ liệu thưa CSR; không cần GPU. Kiểm fresh-kernel, split IDs và leakage; fit/forward-backward-update khi phù hợp; reload tương đương trước test; metric/ID/count đúng, không bịa score hoặc GPU fit. Không gửi mã nguồn.
-Merge: Trong bản làm việc, nối các module đã lưu theo chữ ký tóm tắt; chỉ thêm glue/assertions trả về, không thay bằng toàn notebook mới. Run All từ kernel sạch sau khi kiểm imports/config và thứ tự.
-Budget: input=600; output=1100; reserve=300
-Handoff: train_text/val_text: list[str]; y_train/y_val: int64[N]; nhãn [neg,pos]; dữ liệu thưa CSR; không cần GPU. Kiểm fresh-kernel, split IDs và leakage; fit/forward-backward-update khi phù hợp; reload tương đương trước test; metric/ID/count đúng, không bịa score hoặc GPU fit. Giữ thêm chữ ký/import/cấu hình từ các phụ thuộc còn được caller dùng; chỉ tóm tắt chữ, đối chiếu với code vừa sinh.
-### Prompt
-Viết glue và assertions tối thiểu nối các module theo hợp đồng đã gửi, giữ đúng split, IDs và metric. Chỉ trả phần ghép còn thiếu cùng tóm tắt API, không sinh lại toàn bộ pipeline.
+Budget: input=800; output=1000; reserve=200
+Summary: no
+-->
 
+### Context cần chuẩn bị
+
+Lần lượt dùng các prompt tóm tắt sau, hoặc dùng lại context khớp code hiện tại:
+
+1. [Đọc dữ liệu, chuẩn hóa và chia validation](#context-m015)
+2. [Nạp lại, đánh giá test một lần và dự đoán — f, pred, row](#context-m025)
+
+### Prompt ghép và kiểm tra
+
+```text
+Viết phần kết nối và assertions còn thiếu, kèm imports cần dùng, theo các context dưới đây. Kiểm split/IDs, I/O, metric, cấu hình đã chọn và reload; dùng fit/predict cho pipeline sparse hoặc forward/loss/update cho neural. Không sinh lại toàn bộ notebook hoặc tự chọn lại tham số.
+
+Context m015 — Đọc dữ liệu, chuẩn hóa và chia validation:
+[Dán tóm tắt m015]
+
+Context m025 — Nạp lại, đánh giá test một lần và dự đoán — f, pred, row:
+[Dán tóm tắt m025]
+```

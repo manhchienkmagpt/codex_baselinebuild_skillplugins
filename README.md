@@ -87,14 +87,18 @@ Mặc định mỗi bài tạo sáu tệp:
 | `baseline_basic.ipynb` | Bản cơ bản, có huấn luyện |
 | `baseline_hardcore.ipynb` | Mô hình scratch chưa huấn luyện, chỉ suy luận |
 | `huong_giai_quyet.md` | Báo cáo hướng giải quyết bằng tiếng Việt |
-| `baseline_basic_promting.md` | Prompt ngắn kèm vị trí code basic để nâng cấp tới phương pháp tối ưu |
-| `baseline_hardcore_promting.md` | Prompt dựng từng module và chuyển tóm tắt giữa các phiên độc lập |
+| `baseline_basic_promting.md` | Prompt sửa từng module, code basic đính kèm và các context phụ thuộc |
+| `baseline_hardcore_promting.md` | Prompt tóm tắt code đã tạo, rồi dựng module mới từ các context cần thiết |
 
 ### Sử dụng hai file prompt
 
-Mỗi bước dùng một phiên mới trên Gemini 3.8 Flash, thinking low. Basic gửi prompt với đoạn code được chỉ định; hardcore chỉ gửi prompt và bản tóm tắt phụ thuộc. Cả hai hướng tới phương pháp của `baseline.ipynb`, không bảo đảm cùng điểm số khi chưa đo. Các file này là hướng dẫn học/nâng cấp; notebook hardcore vẫn chỉ suy luận với trọng số chưa huấn luyện.
+Định dạng 3 chỉ giữ context cần chuẩn bị, prompt cần gửi và code đính kèm. Module độc lập đi thẳng vào prompt; module có phụ thuộc liên kết đến các prompt tóm tắt trước đó. Dán context vào các ô có tên và dùng lại khi code/API chưa đổi.
 
-Mỗi prompt là một đoạn 2–4 câu, không Markdown; tiêu đề và hướng dẫn thao tác nằm ngoài prompt. Ưu tiên prompt dưới 100 tokens, toàn phiên tối đa 2000 tokens gồm input, output và thinking. Đếm input bằng Gemini, đặt trần output nếu nền tảng hỗ trợ; các ngân sách chưa có số đo thực tế phải ghi chưa kiểm chứng. Module dài được chia nhỏ và chuyển tiếp bằng tóm tắt interface.
+Không tạo bước hoặc context fingerprint riêng. Các bước dữ liệu giữ đúng mẫu, ID, nhãn, quy tắc chia split và kiểm tra trùng cần thiết. Code basic đính kèm vẫn giữ nguyên nếu đã có lời gọi fingerprint. Dùng `migrate_prompt_guides.py <task_dir> --refresh` để xem thay đổi cho guide định dạng 3 hiện có; thêm `--write` để lưu.
+
+Prompt nằm trong khối `text`, code đính kèm nằm riêng trong khối `python`. Basic phù hợp chỉ cần tóm tắt code hiện có. Hardcore được gửi code để lấy tóm tắt; phiên tạo module chỉ dùng chữ/context. Bỏ các bước imports/cài thư viện/cấu hình chung và mục ghép kết quả: mỗi module trả kèm imports, tự chọn tham số liên quan và nêu ngắn lý do. Tham số dùng chung được khai báo một lần và truyền qua context đến huấn luyện/reload.
+
+Quy tắc phiên và ngân sách nằm trong skill/metadata ẩn; kiểm tra offline không xác nhận token thực tế. Các guide giữ phương pháp, dữ liệu và metric của bài toán, cho phép chọn siêu tham số phù hợp. Notebook và báo cáo đã giao được giữ nguyên; hardcore gốc vẫn chỉ suy luận với trọng số chưa huấn luyện.
 
 Workflow đầy đủ tạo sáu file. Gọi notebook engineer hoặc chọn riêng basic/hardcore sẽ có file prompt tương ứng, trừ khi yêu cầu rõ chỉ xuất notebook. Chỉ báo cáo hoặc chỉ optimized không cần tạo prompt mới. Các bài đã sinh không được tự cập nhật hàng loạt.
 

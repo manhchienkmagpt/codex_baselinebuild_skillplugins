@@ -29,7 +29,9 @@ Still deliver configured notebooks with explicit real-source paths/schema and ac
 
 ## Manual prompt companions
 
-Read and apply the [manual prompt guide contract](references/prompting_contract.md). Full workflow delivery has six primary files, including baseline_basic_promting.md and baseline_hardcore_promting.md. Author both from the actual optimized/basic implementation: basic uses small code excerpts, hardcore uses only prose and dependency summaries to build toward the optimized method. Keep the delivered hardcore notebook inference-only. Respect selected variants and explicitly restricted output.
+Exclude fingerprint creation/summary steps and their contexts from manual guides. Keep split/ID/label and duplicate-group/leakage requirements. Existing basic source attachments stay exact, even when their code contains fingerprint calls; do not turn those calls into prompting prerequisites. Use `migrate_prompt_guides.py --refresh` to update existing format-3 guides.
+
+Read and apply the [manual prompt guide contract](references/prompting_contract.md). Deliver baseline_basic_promting.md/basic and baseline_hardcore_promting.md/hardcore as selected. Author format 3: dependency-context links, one complete copyable prompt, and separate Python inputs. Remove long overviews, visible budgets/locations, merge sections and standalone imports/setup/global-config modules. Each generated module includes its imports and chooses suitable local parameters with a brief reason; shared choices have one owner and flow through context into loss/training/reload. Preserve task invariants and architecture, not baseline tuning values. Basic code already suitable needs only a summary; hardcore may attach code for summary extraction, not generation. Keep notebooks/reports and the delivered inference-only hardcore policy unchanged.
 
 Run `python <skill_dir>/scripts/validate_prompt_guides.py <task_dir>` after authoring both guides; add `--variant basic` or `--variant hardcore` for a selected companion. This offline check does not prove Gemini token counts. Retain the guides during cleanup.
 
