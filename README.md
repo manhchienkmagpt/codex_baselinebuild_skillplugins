@@ -71,15 +71,15 @@ Mỗi plugin có ba skill:
 
 | Skill | Phạm vi |
 | --- | --- |
-| `*-baseline-workflow` | Toàn bộ quy trình: notebook và báo cáo |
-| `*-notebook-engineer` | Tạo hoặc chỉnh sửa notebook |
+| `*-baseline-workflow` | Toàn bộ quy trình: notebook, báo cáo và hai file prompt |
+| `*-notebook-engineer` | Tạo hoặc chỉnh sửa notebook và file prompt của biến thể tương ứng |
 | `*-solution-architect` | Phân tích bài toán và viết báo cáo |
 
 Có thể yêu cầu riêng một biến thể hoặc chỉ báo cáo.
 
 ## Tệp đầu ra
 
-Mặc định mỗi bài tạo bốn tệp:
+Mặc định mỗi bài tạo sáu tệp:
 
 | Tệp | Nội dung |
 | --- | --- |
@@ -87,6 +87,18 @@ Mặc định mỗi bài tạo bốn tệp:
 | `baseline_basic.ipynb` | Bản cơ bản, có huấn luyện |
 | `baseline_hardcore.ipynb` | Mô hình scratch chưa huấn luyện, chỉ suy luận |
 | `huong_giai_quyet.md` | Báo cáo hướng giải quyết bằng tiếng Việt |
+| `baseline_basic_promting.md` | Prompt ngắn kèm vị trí code basic để nâng cấp tới phương pháp tối ưu |
+| `baseline_hardcore_promting.md` | Prompt dựng từng module và chuyển tóm tắt giữa các phiên độc lập |
+
+### Sử dụng hai file prompt
+
+Mỗi bước dùng một phiên mới trên Gemini 3.8 Flash, thinking low. Basic gửi prompt với đoạn code được chỉ định; hardcore chỉ gửi prompt và bản tóm tắt phụ thuộc. Cả hai hướng tới phương pháp của `baseline.ipynb`, không bảo đảm cùng điểm số khi chưa đo. Các file này là hướng dẫn học/nâng cấp; notebook hardcore vẫn chỉ suy luận với trọng số chưa huấn luyện.
+
+Mỗi prompt là một đoạn 2–4 câu, không Markdown; tiêu đề và hướng dẫn thao tác nằm ngoài prompt. Ưu tiên prompt dưới 100 tokens, toàn phiên tối đa 2000 tokens gồm input, output và thinking. Đếm input bằng Gemini, đặt trần output nếu nền tảng hỗ trợ; các ngân sách chưa có số đo thực tế phải ghi chưa kiểm chứng. Module dài được chia nhỏ và chuyển tiếp bằng tóm tắt interface.
+
+Workflow đầy đủ tạo sáu file. Gọi notebook engineer hoặc chọn riêng basic/hardcore sẽ có file prompt tương ứng, trừ khi yêu cầu rõ chỉ xuất notebook. Chỉ báo cáo hoặc chỉ optimized không cần tạo prompt mới. Các bài đã sinh không được tự cập nhật hàng loạt.
+
+Kiểm tra hai file bằng `python <workflow_skill>/scripts/validate_prompt_guides.py <task_dir>`; thêm `--variant basic` hoặc `--variant hardcore` khi chỉ chọn một biến thể. Kiểm tra offline không xác nhận token Gemini thực tế.
 
 ### Vị trí lưu
 

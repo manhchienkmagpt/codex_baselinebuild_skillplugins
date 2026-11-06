@@ -1,6 +1,6 @@
 ---
 name: nlp-notebook-engineer
-description: Generate or repair Vietnamese NLP/image-to-text notebooks in optimized, minimal-preprocessing basic and untrained inference-only hardcore variants. Follow packaged fewshot, flexible cells and fixed settings for Jupyter/Colab and a 32 GB GPU target.
+description: Generate or repair Vietnamese NLP/image-to-text notebooks in optimized, minimal-preprocessing basic and untrained inference-only hardcore variants. Follow packaged fewshot, flexible cells and fixed settings for Jupyter/Colab and a 32 GB GPU target; include concise basic/hardcore manual prompt guides for independent Gemini sessions.
 ---
 
 # NLP Notebook Engineer
@@ -24,6 +24,10 @@ Preserve dataset/version, raw sample membership, grouping, label semantics and o
 Keep fixed uppercase constants, default PyTorch precision and simple cuda/cpu device selection. No VRAM/precision automation, AMP or OOM controllers. Preserve task masks, span offsets, CTC lengths and valid losses. Optimized/basic reload complete best pipelines; hardcore has no checkpoint requirement.
 
 Validate syntax, metadata and policy per notebook; smoke-test actual data where feasible. Keep separate runtime paths. Clear notebook outputs/counts before handoff. Remove only this task's temporary files; keep requested primary notebooks/proposal and user inputs. Return paths, independent Run All instructions, actual check status and learner next steps; never claim unmeasured training quality.
+
+## Manual prompt companions
+
+Follow the [manual prompt guide contract](../nlp-baseline-workflow/references/prompting_contract.md). Generate baseline_basic_promting.md with basic and baseline_hardcore_promting.md with hardcore unless the user explicitly requests only notebook files. Use actual notebook cells/interfaces; basic attaches bounded code excerpts while hardcore sends only prose/summary contracts. Both sequences lead toward the optimized method, including training/evaluation where appropriate, without changing the delivered hardcore notebook policy. Explicit report-only/optimized-only requests need no guides. Validate the selected guide(s) with the workflow's `scripts/validate_prompt_guides.py`; include their paths and actual token-verification status in the handoff.
 
 ## Training and checkpoint style
 

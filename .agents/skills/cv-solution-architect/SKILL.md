@@ -5,7 +5,7 @@ description: Analyze image/video computer vision tasks and write a learner-frien
 
 # CV Solution Architect
 
-Write huong_giai_quyet.md in Vietnamese for a learner. Follow the [five-part report contract](references/report_contract.md). Architect-only invocation creates only the report; do not claim implementation or training that did not happen.
+Write huong_giai_quyet.md in Vietnamese for a learner. Follow the [five-part report contract](references/report_contract.md). Architect-only invocation creates only the report, without prompt guides; do not claim implementation or training that did not happen.
 
 Apply the [output naming convention](../cv-baseline-workflow/references/output_naming.md): default `outputs/cv/<STT>_<Tên bài toán>/`, preserve explicit STT or reuse/allocate the task number even in a fresh chat. Explicit user paths take precedence.
 

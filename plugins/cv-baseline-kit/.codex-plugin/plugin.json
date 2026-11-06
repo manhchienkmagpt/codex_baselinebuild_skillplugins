@@ -1,12 +1,12 @@
 {
   "name": "cv-baseline-kit",
-  "version": "1.0.3",
-  "description": "Vietnamese CV optimized/basic/hardcore notebooks and a five-part learner-focused optimized solution report.",
+  "version": "1.1.0",
+  "description": "Vietnamese CV optimized/basic/hardcore notebooks, a five-part solution report and two manual prompt guides.",
   "skills": "./skills/",
   "interface": {
     "displayName": "CV Baseline Kit",
     "shortDescription": "Ba mức baseline CV: tối ưu, basic và hardcore",
-    "longDescription": "Tạo ba notebook độc lập và báo cáo tiếng Việt tập trung năm phần: hiểu bài toán, phân tích dữ liệu/hướng tiếp cận, tiền xử lý tối ưu, chọn mô hình, siêu tham số và lý do. Phân biệt cấu hình đề xuất với tốt nhất đã đo trên validation; không thêm lịch sử kiểm thử hoặc chương vận hành dài. Giữ cấu hình cố định, mục tiêu GPU 32 GB và checkpoint inference gọn. Fewshot thị giác mới lấy từ ba nhóm outputs ảnh → text để tham khảo thành phần ảnh/phong cách; chưa có mẫu CV thuần hoặc video trong thư viện.",
+    "longDescription": "Tạo ba notebook độc lập và báo cáo tiếng Việt tập trung năm phần: hiểu bài toán, phân tích dữ liệu/hướng tiếp cận, tiền xử lý tối ưu, chọn mô hình, siêu tham số và lý do. Phân biệt cấu hình đề xuất với tốt nhất đã đo trên validation; không thêm lịch sử kiểm thử hoặc chương vận hành dài. Giữ cấu hình cố định, mục tiêu GPU 32 GB và checkpoint inference gọn. Fewshot thị giác mới lấy từ ba nhóm outputs ảnh → text để tham khảo thành phần ảnh/phong cách; chưa có mẫu CV thuần hoặc video trong thư viện. Mỗi bài có thêm hai file prompt basic/hardcore ngắn gọn cho Gemini 3.8 Flash thinking low, chuyển tóm tắt giữa phiên độc lập và ngân sách tổng 2000 tokens gồm thinking; chưa đo thì ghi chưa kiểm chứng.",
     "developerName": "CHIEN",
     "category": "Developer Tools",
     "capabilities": [
@@ -14,7 +14,7 @@
       "Write"
     ],
     "defaultPrompt": [
-      "Dùng $cv-baseline-workflow để tạo ba notebook và huong_giai_quyet.md tập trung giải thích bài toán, dữ liệu/hướng tiếp cận, tiền xử lý, mô hình và siêu tham số tối ưu có cơ sở."
+      "Dùng $cv-baseline-workflow tạo ba notebook, huong_giai_quyet.md và hai file baseline_basic_promting.md, baseline_hardcore_promting.md theo hợp đồng prompt cho các phiên Gemini độc lập tối đa 2000 tokens."
     ]
   }
 }

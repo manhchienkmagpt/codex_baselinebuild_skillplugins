@@ -1,6 +1,6 @@
 # Fewshot NLP chọn từ outputs
 
-Thư viện mới được chọn từ tám nhóm output hiện có và thay thế toàn bộ bộ mẫu đánh số trước đây. Bản gốc tuyển chọn ở `fewshot/<task_slug>/`; skill/plugin đóng gói bản sao riêng trong assets/fewshot để dùng độc lập với dự án. Các bản sao giữ nguyên nội dung bốn tệp của từng output, không đổi dataset, model hoặc metadata. Các notebook nguồn đã có outputs rỗng và execution_count=null.
+Thư viện mới được chọn từ tám nhóm output hiện có và thay thế toàn bộ bộ mẫu đánh số trước đây. Bản gốc tuyển chọn ở `fewshot/<task_slug>/`; skill/plugin đóng gói bản sao riêng trong assets/fewshot để dùng độc lập với dự án. Các bản sao giữ nguyên nội dung bốn tệp nguồn của từng output và bổ sung hai file prompt; không đổi dataset, model hoặc metadata. Các notebook nguồn đã có outputs rỗng và execution_count=null.
 
 ## Chọn đúng tác vụ và biến thể
 
@@ -17,7 +17,7 @@ Thư viện mới được chọn từ tám nhóm output hiện có và thay th�
 
 Ưu tiên đúng họ tác vụ, sau đó đúng biến thể cần tạo. Chỉ đọc các mẫu gần nhất và các phần source liên quan; không nạp toàn bộ thư viện mặc định. GEC/pointer-copy có thể gợi ý cách tổ chức cho rewriting/summarization, nhưng không tự chứng minh model đó tối ưu cho dataset khác. Các tác vụ chưa có mẫu như retrieval, dialogue hoặc table extraction dùng playbook và dữ liệu thực; không giả vờ thư viện có ví dụ tương ứng.
 
-## Cách dùng bốn tệp
+## Cách dùng sáu tệp
 
 - `baseline.ipynb`: phong cách optimized, pipeline dữ liệu/model đúng nhiệm vụ, loop trực tiếp và checkpoint inference gọn. Text-only vẫn scratch; ảnh → text theo [pretraining policy](../../nlp-baseline-workflow/references/pretraining_policy.md).
 - `baseline_basic.ipynb`: tham khảo riêng cho tiền xử lý tối thiểu và model đơn giản có full training/evaluation. Không lấy BPE/features/augmentation của optimized đưa vào basic.
@@ -31,3 +31,7 @@ Giữ cách viết tiếng Việt dễ đọc, constants cố định và natura
 Các ví dụ là tài liệu authoring, không phải dependency runtime hay lời bảo đảm chất lượng. Không copy scores, đường dẫn dữ liệu, split, label mapping, model/provenance hoặc assumptions sang bài mới. Ví dụ ABSA thiếu polarity test, FUNSD thiếu linking gold, CoEdIT/COCO/QA có held-out riêng; luôn kiểm lại nguồn thật. Trạng thái kiểm chứng trước đây không phải chứng nhận full training cho mọi mẫu.
 
 Không notebook mới nào được import/execute các file trong thư viện, đọc output khác để lấy checkpoint/vocabulary, hoặc mở workbook/fewshot khi Run All. Áp dụng [notebook contract](notebook_contract.md), [runtime settings](runtime_config.md) và [three-variant contract](../../nlp-baseline-workflow/references/dual_notebook_contract.md). Giải thích lựa chọn tối ưu phải dựa dữ liệu/metric/ngân sách; chưa đo thì ghi đề xuất có cơ sở.
+
+## Hai file prompt đi kèm
+
+Mỗi nhóm mẫu đóng gói có thêm `baseline_basic_promting.md` và `baseline_hardcore_promting.md`, theo [hợp đồng prompt](../../nlp-baseline-workflow/references/prompting_contract.md). Basic chỉ vị trí đoạn code cần sửa; hardcore dùng mô tả và tóm tắt interface để xây dựng tới phương pháp tối ưu trong các phiên độc lập. Các ngân sách là hạn mức chưa đo bằng Gemini, không phải chứng nhận token thực tế. Đọc mẫu đúng họ tác vụ, không sao chép prompt chung sang dữ liệu khác. Các mẫu OCR/captioning/FUNSD giữ nguyên nhiệm vụ NLP nguồn kể cả khi được đóng gói trong bộ CV; chúng không phải mẫu detector/segmenter/tracker.

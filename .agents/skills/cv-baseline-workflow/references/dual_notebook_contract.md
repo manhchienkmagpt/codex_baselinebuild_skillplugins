@@ -10,8 +10,10 @@ This historical filename is retained for link compatibility. All three companion
 | baseline_basic.ipynb | Minimal task-correct conversion, required image/video and target conversion | Simpler scratch model with complete meaningful training and evaluation |
 | baseline_hardcore.ipynb | No separate preprocessing pipeline; minimal raw-input conversion inside model only | One untrained scratch model, immediate inference; learner designs preprocessing/model/training |
 | huong_giai_quyet.md | Shared Vietnamese report | Explain the optimized solution in five focused parts |
+| baseline_basic_promting.md | Task-specific manual prompts with selected basic code | Upgrade basic toward the optimized method |
+| baseline_hardcore_promting.md | Task-specific text-only prompts with interface summaries | Build components toward the optimized method across independent sessions |
 
-Respect report-only, notebook-only and explicit single-variant requests. No extra files just to complete this list.
+Respect report-only and explicit single-variant requests. Notebook engineer includes the matching guide for each selected basic/hardcore variant unless the user explicitly requests only notebook files. Optimized-only/report-only requests need no new guide. Follow the [manual prompt guide contract](prompting_contract.md); do not create unrelated variants just to complete the list.
 
 ## Basic boundaries
 
@@ -36,7 +38,7 @@ Run the validator separately on all selected notebooks. Review split equality, l
 
 ## Clean handoff
 
-Keep only the requested primary subset (four files for full workflow). Track and remove only agent-created temporary fixtures, scripts, logs/caches and runtime assets after validation; preserve user inputs, datasets and unrelated pre-existing files. Check resolved cleanup paths before recursive removal. Do not delete user checkpoints during notebook execution. Clear notebook outputs/counts and verify no dependency on removed assets. Summarize execution/check status in the final handoff or concise notebook notes; retain only methodological evidence in the five-part report.
+Keep only the requested primary subset (six files for full workflow). Track and remove only agent-created temporary fixtures, scripts, logs/caches and runtime assets after validation; preserve user inputs, datasets and unrelated pre-existing files. Check resolved cleanup paths before recursive removal. Do not delete user checkpoints during notebook execution. Clear notebook outputs/counts and verify no dependency on removed assets. Summarize execution/check status in the final handoff or concise notebook notes; retain only methodological evidence in the five-part report.
 
 ## Training layout and minimal checkpoints
 

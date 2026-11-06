@@ -1,6 +1,6 @@
 ---
 name: cv-notebook-engineer
-description: Generate or repair Vietnamese computer vision notebooks for image/video classification, detection, segmentation, keypoints, restoration and tracking in optimized, basic and untrained hardcore variants.
+description: Generate or repair Vietnamese computer vision notebooks for image/video classification, detection, segmentation, keypoints, restoration and tracking in optimized, basic and untrained hardcore variants; include concise basic/hardcore manual prompt guides for independent Gemini sessions.
 ---
 
 # CV Notebook Engineer
@@ -20,6 +20,10 @@ Read actual schema and relevant packaged sources before implementation. Preserve
 Read the [three-variant contract](../cv-baseline-workflow/references/dual_notebook_contract.md), [CV task guide](../cv-baseline-workflow/references/cv_tasks.md), [backbone policy](../cv-baseline-workflow/references/pretraining_policy.md), [hardcore contract](../cv-baseline-workflow/references/hardcore_contract.md), [runtime settings](../cv-notebook-engineer/references/runtime_config.md) and [fewshot guide](../cv-notebook-engineer/references/fewshot_guide.md). Read the closest packaged source notebooks. Spreadsheet input follows the [Excel contract](../cv-baseline-workflow/references/excel_input_contract.md).
 
 Support image classification/pairs, detection, semantic/instance segmentation, keypoints, restoration, video classification, action recognition and tracking. Route OCR/captioning/VQA and other language-output tasks to the NLP skills; do not duplicate those policies here. Plan for one 32 GB GPU, fixed editable constants and ordinary PyTorch precision; no AMP, VRAM probes, adaptive batches/precision or OOM controllers. Sources and helpers are packaged locally; runtime notebooks never depend on this skill's files.
+
+## Manual prompt companions
+
+Follow the [manual prompt guide contract](../cv-baseline-workflow/references/prompting_contract.md). Generate baseline_basic_promting.md with basic and baseline_hardcore_promting.md with hardcore unless the user explicitly requests only notebook files. Use actual notebook cells/interfaces; basic attaches bounded code excerpts while hardcore sends only prose/summary contracts. Both sequences lead toward the optimized method, including training/evaluation where appropriate, without changing the delivered hardcore notebook policy. Explicit report-only/optimized-only requests need no guides. Validate the selected guide(s) with the workflow's `scripts/validate_prompt_guides.py`; include their paths and actual token-verification status in the handoff.
 
 ## Training and checkpoint style
 

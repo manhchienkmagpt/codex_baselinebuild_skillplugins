@@ -1,12 +1,12 @@
 ---
 name: cv-baseline-workflow
-description: Build optimized, minimal-preprocessing basic and inference-only hardcore computer vision notebooks plus a Vietnamese proposal for image/video tasks from descriptions or Excel task tables.
+description: Build optimized, minimal-preprocessing basic and inference-only hardcore computer vision notebooks plus a Vietnamese proposal for image/video tasks from descriptions or Excel task tables; include concise basic/hardcore manual prompt guides for independent Gemini sessions.
 ---
 
 # CV Baseline Workflow
 
 
-Resolve dataset/version, sample schema, labels, task metric and image/video/sequence split unit. Default `outputs/cv/<STT>_<Tên bài toán>/` contains baseline.ipynb, baseline_basic.ipynb, baseline_hardcore.ipynb and huong_giai_quyet.md. Apply the [output naming convention](references/output_naming.md), even in a new chat without a naming request: preserve supplied STT; otherwise reuse a matching task directory or allocate the next available number. Explicit user paths take precedence. Respect report-only/notebook-only/selected-variant requests.
+Resolve dataset/version, sample schema, labels, task metric and image/video/sequence split unit. Default `outputs/cv/<STT>_<Tên bài toán>/` contains baseline.ipynb, baseline_basic.ipynb, baseline_hardcore.ipynb, huong_giai_quyet.md, baseline_basic_promting.md and baseline_hardcore_promting.md. Apply the [output naming convention](references/output_naming.md), even in a new chat without a naming request: preserve supplied STT; otherwise reuse a matching task directory or allocate the next available number. Explicit user paths take precedence. Respect report-only/notebook-only/selected-variant requests.
 
 Optimized uses strong task-specific preprocessing and a self-built task model, optionally with an eligible pretrained backbone. Basic uses only minimal task-correct image/video conversion and a simpler scratch model with full training/evaluation. Hardcore loads raw data, defines one untrained scratch model and directly infers, with mechanical conversion inside the model only. Preserve existing optimized content during companion updates.
 
@@ -19,9 +19,15 @@ Read the [three-variant contract](../cv-baseline-workflow/references/dual_notebo
 
 Support image classification/pairs, detection, semantic/instance segmentation, keypoints, restoration, video classification, action recognition and tracking. Route OCR/captioning/VQA and other language-output tasks to the NLP skills; do not duplicate those policies here. Plan for one 32 GB GPU, fixed editable constants and ordinary PyTorch precision; no AMP, VRAM probes, adaptive batches/precision or OOM controllers. Sources and helpers are packaged locally; runtime notebooks never depend on this skill's files.
 
+## Manual prompt companions
+
+Read and apply the [manual prompt guide contract](references/prompting_contract.md). Full workflow delivery has six primary files, including baseline_basic_promting.md and baseline_hardcore_promting.md. Author both from the actual optimized/basic implementation: basic uses small code excerpts, hardcore uses only prose and dependency summaries to build toward the optimized method. Keep the delivered hardcore notebook inference-only. Respect selected variants and explicitly restricted output.
+
+Run `python <skill_dir>/scripts/validate_prompt_guides.py <task_dir>` after authoring both guides; add `--variant basic` or `--variant hardcore` for a selected companion. This offline check does not prove Gemini token counts. Retain the guides during cleanup.
+
 ## Validator regression checks
 
-Run `python <skill_dir>/tests/test_validate_artifacts.py` from any writable workspace to exercise offline variant, training/pretraining and prediction-contract checks. Tests do not download models or datasets.
+Run `python <skill_dir>/tests/test_validate_artifacts.py` from any writable workspace to exercise offline variant, training/pretraining and prediction-contract checks. Tests do not download models or datasets. Also run `python <skill_dir>/tests/test_validate_prompt_guides.py` for guide references, dependency transfer and token-budget arithmetic.
 
 ## Training and checkpoint style
 
