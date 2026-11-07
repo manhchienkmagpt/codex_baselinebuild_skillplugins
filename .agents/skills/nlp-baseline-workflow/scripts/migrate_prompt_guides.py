@@ -3,8 +3,8 @@
 
 Usage: python migrate_prompt_guides.py TASK_DIR [TASK_DIR ...] [--write]
 Without --write, build and validate the proposed guides without changing files.
-Formats 1 and 2 are upgraded to format 3. Use --refresh to apply current
-presentation policy to existing format-3 guides without changing source inputs.
+Formats 1–3 are upgraded to responsibility-based format 4. Use --refresh to
+rebuild format-4 guides from current notebooks/report without changing them.
 Notebook code is inspected, never executed.
 """
 from __future__ import annotations
@@ -553,22 +553,20 @@ def render_v2(directory, variant, old_content):
 
 
 def render(directory, variant, old_content):
-    from prompt_modules import render as compact_render
-    return compact_render(directory, variant, old_content)
+    from focused_prompts import render as focused_render
+    return focused_render(directory, variant, old_content)
 
 
 def migrate(directory, write=False, refresh=False):
     proposed = []
     for variant in ("basic", "hardcore"):
         path = directory / f"baseline_{variant}_promting.md"
+        if not path.exists():
+            continue
         old = path.read_text(encoding="utf-8")
-        if "\nFormat: 3\n" in old:
-            if not refresh:
-                continue
-            from prompt_modules import remove_fingerprint_steps
-            content = remove_fingerprint_steps(old)
-        else:
-            content = render(directory, variant, old)
+        if "\nFormat: 4\n" in old and not refresh:
+            continue
+        content = render(directory, variant, old)
         errors, warnings = scan_modular_guide(path, variant, content)
         if errors:
             raise ValueError(str(path) + ": " + "\n".join(errors))
@@ -588,7 +586,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("task_dirs", nargs="+", type=Path)
     parser.add_argument("--write", action="store_true")
-    parser.add_argument("--refresh", action="store_true", help="Refresh format-3 guides while preserving attached code")
+    parser.add_argument("--refresh", action="store_true", help="Rebuild format-4 guides from current local sources")
     args = parser.parse_args()
     for directory in args.task_dirs:
         migrate(directory, args.write, args.refresh)

@@ -21,15 +21,17 @@ Support image classification/pairs, detection, semantic/instance segmentation, k
 
 ## Manual prompt companions
 
-Exclude fingerprint creation/summary steps and their contexts from manual guides. Keep split/ID/label and duplicate-group/leakage requirements. Existing basic source attachments stay exact, even when their code contains fingerprint calls; do not turn those calls into prompting prerequisites. Use `migrate_prompt_guides.py --refresh` to update existing format-3 guides.
+Use responsibility-based format 4 under the [manual prompt guide contract](references/prompting_contract.md). Basic focuses on preprocessing, model and hyperparameters, reusing the existing training pipeline. Hardcore adds data loading/splitting and loss/optimizer/training, while the delivered hardcore notebook itself remains inference-only. Implement the optimized method's idea with compatible I/O rather than reproducing its notebook. Split only into complete work items when token fit requires it, never every helper or partial function.
 
-Read and apply the [manual prompt guide contract](references/prompting_contract.md). Deliver baseline_basic_promting.md/basic and baseline_hardcore_promting.md/hardcore as selected. Author format 3: dependency-context links, one complete copyable prompt, and separate Python inputs. Remove long overviews, visible budgets/locations, merge sections and standalone imports/setup/global-config modules. Each generated module includes its imports and chooses suitable local parameters with a brief reason; shared choices have one owner and flow through context into loss/training/reload. Preserve task invariants and architecture, not baseline tuning values. Basic code already suitable needs only a summary; hardcore may attach code for summary extraction, not generation. Keep notebooks/reports and the delivered inference-only hardcore policy unchanged.
+Attach exact relevant basic code; hardcore generation uses prose/context. Include imports and short placement comments with returned code. Reuse stable interfaces directly; request a summary only when a later step consumes it, at most 3 lines and a target of 80 tokens, shorter than its input. Shared settings have one owner and flow through context. Keep data/metric/alignment and pretraining constraints, while choosing suitable tunable values. Do not add standalone imports, audit, unchanged-helper, metric, export or reload sessions.
 
-Run `python <skill_dir>/scripts/validate_prompt_guides.py <task_dir>` after authoring both guides; add `--variant basic` or `--variant hardcore` for a selected companion. This offline check does not prove Gemini token counts. Retain the guides during cleanup.
+Each chat is independent. Target at most 1800 tokens with reserve within the platform limit input + output < 2000. Code output may exceed input; only summaries have the shorter-output requirement. The user's web chatbot cannot enforce a separate output cap, so do not claim prompt wording guarantees it. Token verification remains unverified without real counters. Preserve notebooks/reports during guide updates.
+
+Use `scripts/migrate_prompt_guides.py <task_dir>` to preview formats 1-3 to 4, `--write` to save and `--refresh` to rebuild format 4. Validate with `scripts/validate_prompt_guides.py <task_dir>` (optional `--variant`). Run `tests/test_validate_prompt_guides.py` and `tests/test_focused_prompt_guides.py` for legacy compatibility and focused-guide regression checks.
 
 ## Validator regression checks
 
-Run `python <skill_dir>/tests/test_validate_artifacts.py` from any writable workspace to exercise offline variant, training/pretraining and prediction-contract checks. Tests do not download models or datasets. Also run `python <skill_dir>/tests/test_validate_prompt_guides.py` for guide references, dependency transfer and token-budget arithmetic.
+Run `python <skill_dir>/tests/test_validate_artifacts.py` from any writable workspace to exercise offline variant, training/pretraining and prediction-contract checks. Tests do not download models or datasets. Also run `python <skill_dir>/tests/test_validate_prompt_guides.py` for guide references, dependency transfer and token-budget arithmetic. Run `python <skill_dir>/tests/test_focused_prompt_guides.py` for format-4 grouping, short-summary and migration checks.
 
 ## Training and checkpoint style
 

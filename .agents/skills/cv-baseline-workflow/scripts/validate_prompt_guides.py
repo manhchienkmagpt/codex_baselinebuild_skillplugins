@@ -271,6 +271,8 @@ def checked_budget(value: str, errors: list[str], label: str) -> tuple[int, int]
 
 
 def scan_modular_guide(path: Path, variant: str, content: str) -> tuple[list[str], list[str]]:
+    if re.search(r"^Format: 4\s*$", outside_fences(content).split("## Bước ", 1)[0], re.M):
+        return scan_focused_guide(path, variant, content)
     errors: list[str] = []
     warnings: list[str] = []
     masked = outside_fences(content)
@@ -433,13 +435,146 @@ def scan_modular_guide(path: Path, variant: str, content: str) -> tuple[list[str
     return errors, warnings
 
 
+def scan_focused_guide(path: Path, variant: str, content: str) -> tuple[list[str], list[str]]:
+    """Check format 4 independently; formats 1–3 retain their historical rules."""
+    errors, warnings = [], []
+    if FINGERPRINT_WORD.search(instruction_text(content)):
+        errors.append("Guide: audit/fingerprint sessions are excluded from focused work")
+    masked = outside_fences(content)
+    steps = list(STEP.finditer(masked))
+    header = masked[:steps[0].start()] if steps else masked
+    for key, expected in (("Format", "4"), ("Variant", variant), ("Model", "gemini-3.8-flash"),
+                          ("Thinking", "low"), ("Session target", "1800"), ("Session limit", "2000")):
+        if single_field(header, key, errors, "Guide") != expected:
+            errors.append(f"Guide: {key} must be {expected}")
+    verification = single_field(header, "Token verification", errors, "Guide")
+    if verification not in ("unverified", "measured"):
+        errors.append("Guide: invalid Token verification")
+    if verification == "unverified":
+        warnings.append("Gemini token usage is unverified; budgets are allowances, not measured counts")
+    groups = ("preprocessing", "model", "hyperparameters") if variant == "basic" else (
+        "data", "preprocessing", "model", "hyperparameters", "training")
+    seen_groups, known, consumed, summarized, owners, budgets = [], {}, set(), set(), {}, {}
+
+    def budget(raw, label, summary=False):
+        inp, out = checked_budget(raw, errors, label)
+        match = re.fullmatch(r"input=(\d+); output=(\d+); reserve=(\d+)", raw)
+        if match and sum(map(int, match.groups())) > 1800:
+            errors.append(f"{label}: format-4 allowance must total <= 1800")
+        if summary and not (0 < out <= 80 and out < inp):
+            errors.append(f"{label}: summary output must be <= 80 and smaller than input")
+        return inp, out
+
+    for index, heading in enumerate(steps):
+        label = f"Step {index + 1}"
+        if int(heading[1]) != index + 1:
+            errors.append(f"{label}: numbering must be consecutive")
+        stop = steps[index + 1].start() if index + 1 < len(steps) else len(content)
+        block = content[heading.end():stop]
+        metadata = re.findall(r"<!-- module\s*\n(.*?)-->", outside_fences(block), re.S)
+        if len(metadata) != 1:
+            errors.append(f"{label}: require one module metadata block")
+            continue
+        meta = metadata[0]
+        values = {k: single_field(meta, k, errors, label) for k in (
+            "ID", "Group", "Kind", "Depends", "Budget", "Summary")}
+        identifier, group = values["ID"], values["Group"]
+        if not re.fullmatch(r"[a-z][a-z0-9_-]*", identifier) or identifier in known:
+            errors.append(f"{label}: invalid/duplicate ID")
+        if values["Kind"] != "code" or group not in groups:
+            errors.append(f"{label}: work must belong to an allowed responsibility group")
+        if not seen_groups or group != seen_groups[-1]:
+            seen_groups.append(group)
+        deps = [] if values["Depends"] == "none" else [d.strip() for d in values["Depends"].split(",")]
+        if len(set(deps)) != len(deps) or any(d not in known for d in deps):
+            errors.append(f"{label}: dependencies must be unique earlier steps")
+        ancestors = set(deps)
+        for dep in deps:
+            ancestors.update(known.get(dep, set()))
+        known[identifier] = ancestors
+        consumed.update(deps)
+        budgets[identifier] = budget(values["Budget"], label)
+        prompts = fenced_blocks(subsection(block, "Prompt tạo hoặc sửa module"), "text")
+        if len(prompts) != 1 or not prompts[0].strip():
+            errors.append(f"{label}: require one complete text prompt")
+        prompt = prompts[0] if prompts else ""
+        if "imports" not in prompt:
+            errors.append(f"{label}: response must include required imports")
+        if set(re.findall(r"\[Dán tóm tắt ([a-z][a-z0-9_-]*)\]", prompt)) != set(deps):
+            errors.append(f"{label}: context slots must match dependencies")
+        for dep in deps:
+            if f"(#context-{dep})" not in subsection(block, "Context cần chuẩn bị"):
+                errors.append(f"{label}: missing context link for {dep}")
+        own = [n.strip() for v in field_values(meta, "Config owns") for n in v.split(",")]
+        uses = [n.strip() for v in field_values(meta, "Config uses") for n in v.split(",")]
+        for name in own:
+            if not name or name in owners:
+                errors.append(f"{label}: duplicate/empty configuration owner {name}")
+            owners[name] = identifier
+        for name in set(uses) - set(own):
+            if owners.get(name) not in ancestors:
+                errors.append(f"{label}: configuration {name} lacks owner context")
+        sources = field_values(meta, "Source")
+        excerpts = [scan_reference(s, path.parent, "baseline_basic.ipynb", errors, label) for s in sources]
+        attached = fenced_blocks(subsection(block, "Code gửi kèm"), "python")
+        if attached != excerpts:
+            errors.append(f"{label}: basic attachment differs from its referenced source")
+        if variant == "basic" and not sources and "bổ sung mới" not in subsection(block, "Code gửi kèm").lower():
+            errors.append(f"{label}: a source-free basic work item must explicitly be new")
+        if variant == "hardcore" and (sources or attached or fenced_blocks(subsection(block, "Prompt tạo hoặc sửa module"), "python")):
+            errors.append(f"{label}: hardcore generation accepts prose/context only")
+        for target in field_values(meta, "Target"):
+            scan_reference(target, path.parent, "baseline.ipynb", errors, label)
+        summary = subsection(block, "Tóm tắt context để dùng tiếp")
+        if values["Summary"] == "yes":
+            summarized.add(identifier)
+            budgets[identifier + ":summary"] = budget(
+                single_field(meta, "Summary budget", errors, label), label + " summary", True)
+            texts = fenced_blocks(summary, "text")
+            if (f'<a id="context-{identifier}"></a>' not in summary or len(texts) != 1
+                    or not fenced_blocks(summary, "python")):
+                errors.append(f"{label}: summary needs an anchor, prompt and current-code input")
+            if texts and not all(s in texts[0] for s in ("3 dòng", "80 token", "ngắn hơn input", "Không giải thích")):
+                errors.append(f"{label}: summary must request a short interface-only response")
+        elif values["Summary"] != "no" or summary.strip() or field_values(meta, "Summary budget"):
+            errors.append(f"{label}: unexpected summary or invalid Summary field")
+        if budgets[identifier][0] and len(prompt + "\n".join(excerpts)) > budgets[identifier][0] * 3:
+            warnings.append(f"{label}: large input; token fit requires real counters and possibly a smaller complete work item")
+    if seen_groups != list(groups):
+        errors.append("Guide: missing, repeated or out-of-order responsibility groups")
+    if consumed != summarized:
+        errors.append("Guide: summaries must exist exactly for consumed results")
+    if verification == "measured":
+        measured = set()
+        for raw in field_values(header, "Measurement"):
+            try:
+                evidence = json.loads(raw)
+                session, inp, total = evidence["step"], evidence["input_tokens"], evidence["total_tokens"]
+                if session not in budgets or session in measured:
+                    raise ValueError("unknown/duplicate session")
+                if evidence["model"] != "gemini-3.8-flash" or evidence["method"] not in (
+                        "Gemini countTokens + usageMetadata", "chatbot token counters"):
+                    raise ValueError("real target model counters are required")
+                if (type(inp) is not int or type(total) is not int or not 0 < inp <= budgets[session][0]
+                        or not inp <= total <= 1800 or total >= 2000 or total - inp > budgets[session][1]):
+                    raise ValueError("usage exceeds the declared allowance")
+                if session.endswith(":summary") and total - inp >= inp:
+                    raise ValueError("summary output must be smaller than actual input")
+                measured.add(session)
+            except (KeyError, TypeError, ValueError) as exc:
+                errors.append(f"Invalid Measurement: {exc}")
+        if measured != set(budgets):
+            errors.append("Measured verification requires every generation and summary session")
+    return errors, warnings
+
+
 def scan_guide(path: Path, variant: str) -> tuple[list[str], list[str]]:
     try:
         content = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as exc:
         return [f"Cannot read guide: {exc}"], []
     header = outside_fences(content).split("## Bước ", 1)[0]
-    if re.search(r"^Format: [23]\s*$", header, re.MULTILINE):
+    if re.search(r"^Format: [234]\s*$", header, re.MULTILINE):
         return scan_modular_guide(path, variant, content)
     if re.search(r"^Format:", header, re.MULTILINE):
         return ["Unsupported prompt guide format"], []

@@ -1,973 +1,217 @@
-# Prompt hardcore: IMDb: TF-IDF từ/ký tự và NB-SVM
+# Prompt hardcore: Phân loại cảm xúc IMDb — optimized
 
 <!-- prompt-guide
-Format: 3
+Format: 4
 Variant: hardcore
 Model: gemini-3.8-flash
 Thinking: low
 Token verification: unverified
-Context merge budget: input=1200; output=500; reserve=300
+Session target: 1800
+Session limit: 2000
 -->
 
-Mỗi lần mở phiên mới, gửi prompt và nội dung đính kèm được chỉ định. Lấy context ở các liên kết trước khi dán vào prompt; dùng lại tóm tắt nếu code chưa đổi.
+Mỗi prompt dùng một chat mới. Gửi prompt cùng code/context được chỉ định; dùng code hiện tại sau khi sửa. Mục tiêu mỗi phiên 1.800 token, tổng input + output phải dưới 2.000; chưa có đo token thực tế. Chỉ tóm tắt ở bước có liên kết dùng tiếp; web không đặt trần output riêng nên giới hạn độ dài tóm tắt là yêu cầu mềm.
 
-## Bước 1: sha(text)
-
-<!-- module
-ID: m003
-Depends: none
-Kind: code
-Budget: input=800; output=1000; reserve=200
-Summary: yes
-Target: baseline.ipynb#cell=3; lines=25-26
-Summary budget: input=1200; output=500; reserve=300
--->
-
-### Prompt tạo hoặc sửa module
-
-```text
-Viết sha(text). Tạo hash ổn định của văn bản để nhận diện nhóm trùng lặp. Trả code kèm imports cần dùng; dùng đúng I/O và các lựa chọn đã có trong context.
-```
-
-### Tóm tắt context để dùng tiếp
-
-<a id="context-m003"></a>
-
-```text
-Tóm tắt giao diện sha(text) từ code dưới đây. Giữ chữ ký, I/O, shape/dtype/device, các tham số đã chọn và trạng thái dùng chung; chỉ trả chữ, không viết lại code hoặc đoán thông tin thiếu.
-```
-
-```python
-# Dán code hiện tại của sha(text) tại đây.
-```
-
-## Bước 2: read_jsonl(path)
+## Bước 1: Load dữ liệu và chia train/validation/test
 
 <!-- module
-ID: m005
-Depends: none
+ID: s01
+Group: data
 Kind: code
-Budget: input=800; output=1000; reserve=200
+Depends: none
+Budget: input=650; output=950; reserve=200
 Summary: yes
-Target: baseline.ipynb#cell=3; lines=31-36
-Summary budget: input=1200; output=500; reserve=300
+Summary budget: input=1400; output=80; reserve=200
+Config owns: splits
 -->
 
 ### Prompt tạo hoặc sửa module
 
 ```text
-Viết read_jsonl(path). Đọc UTF-8 JSONL, giữ thứ tự bản ghi và báo rõ lỗi thiếu file hoặc dữ liệu không hợp lệ. Trả code kèm imports cần dùng; dùng đúng I/O và các lựa chọn đã có trong context.
+Bổ sung loader train/validation/test, giữ nguồn/schema và split chính thức hoặc quy tắc nhóm/seed của bài. Giữ ID, nhãn/references và held-out gốc; kiểm nhóm trùng, chưa fit biểu diễn.
+Nguồn/schema/split: "https://www.tensorflow.org/datasets/catalog/imdb_reviews". IMDb Reviews trong TFDS có text:str và label:int. Theo nguồn/khảo sát trước, có 25.000 train và 25.000 test, mỗi split cân bằng hai lớp; tập unsupervised 50.000 không được dùng trong phương pháp này. Dữ liệu là review phân cực mạnh nên không đại diện mọi sắc thái cảm xúc. Nội dung review có HTML, từ phủ định, cách viết đa dạng và có thể dài. Baseline tách validation khoảng 20% bằng StratifiedGroupKFold theo nhóm văn bản chuẩn hóa để bản sao không vượt biên train/validation. Lần khảo sát trước ghi nhận 123 nhóm nội dung không rỗng giao nhau giữa official train/test; giữ test chuẩn nhưng không coi đây là đánh giá hoàn toàn sạch leakage. Không có mã phim ổn định để chia theo phim.
+Thiết lập split cần giữ: {"SEED":42}.
+Chỉ trả code hoàn chỉnh kèm imports và comment chỉ chỗ thay/thêm. Tự chọn tham số điều chỉnh được; giữ nhãn/ID và ràng buộc bài, không ép giống các giá trị tham khảo.
 ```
 
 ### Tóm tắt context để dùng tiếp
 
-<a id="context-m005"></a>
+<a id="context-s01"></a>
 
 ```text
-Tóm tắt giao diện read_jsonl(path) từ code dưới đây. Giữ chữ ký, I/O, shape/dtype/device, các tham số đã chọn và trạng thái dùng chung; chỉ trả chữ, không viết lại code hoặc đoán thông tin thiếu.
+Tóm tắt code hiện tại trong tối đa 3 dòng, mục tiêu không quá 80 token và ngắn hơn input. Chỉ ghi chữ ký cần gọi, I/O (shape/mask nếu có), cấu hình và trạng thái mà bước sau cần. Không giải thích chức năng, không nhắc lại code; không đoán giá trị thiếu.
 ```
 
 ```python
-# Dán code hiện tại của read_jsonl(path) tại đây.
+# Dán code hiện tại vừa tạo/sửa của phần việc này.
 ```
 
-## Bước 3: normalize_text(text)
+## Bước 2: Tiền xử lí dữ liệu — Biểu diễn và căn chỉnh
 
 <!-- module
-ID: m009
-Depends: none
+ID: s02
+Group: preprocessing
 Kind: code
-Budget: input=800; output=1000; reserve=200
+Depends: s01
+Budget: input=650; output=950; reserve=200
 Summary: yes
+Summary budget: input=1400; output=80; reserve=200
 Target: baseline.ipynb#cell=5; lines=1-4
-Summary budget: input=1200; output=500; reserve=300
--->
-
-### Prompt tạo hoặc sửa module
-
-```text
-Viết normalize_text(text). Viết hàm đọc nguồn dữ liệu theo đặc tả và trả record thô, báo lỗi rõ khi thiếu nguồn; chưa chia hay fit dữ liệu. TFDS imdb_reviews; local JSONL train/test có id, text, label với neg=0, pos=1. Chuẩn hóa HTML/NFC, gộp khoảng trắng; giữ test chuẩn. Trả code kèm imports cần dùng; dùng đúng I/O và các lựa chọn đã có trong context.
-```
-
-### Tóm tắt context để dùng tiếp
-
-<a id="context-m009"></a>
-
-```text
-Tóm tắt giao diện normalize_text(text) từ code dưới đây. Giữ chữ ký, I/O, shape/dtype/device, các tham số đã chọn và trạng thái dùng chung; chỉ trả chữ, không viết lại code hoặc đoán thông tin thiếu.
-```
-
-```python
-# Dán code hiện tại của normalize_text(text) tại đây.
-```
-
-## Bước 4: canonical_rows(rows, split)
-
-<!-- module
-ID: m010
-Depends: m003
-Kind: code
-Budget: input=800; output=1000; reserve=200
-Summary: yes
-Target: baseline.ipynb#cell=5; lines=6-18
-Summary budget: input=1200; output=500; reserve=300
-Config owns: LABEL_NAMES
-Config uses: LABEL_NAMES
+Target: baseline.ipynb#cell=7; lines=1-23
+Config owns: preprocess_1
+Config uses: splits
 -->
 
 ### Context cần chuẩn bị
 
-Lần lượt dùng các prompt tóm tắt sau, hoặc dùng lại context khớp code hiện tại:
-
-1. [sha(text)](#context-m003)
+- [Load dữ liệu và chia train/validation/test](#context-s01)
 
 ### Prompt tạo hoặc sửa module
 
 ```text
-Viết canonical_rows(rows, split). Viết hàm đọc nguồn dữ liệu theo đặc tả và trả record thô, báo lỗi rõ khi thiếu nguồn; chưa chia hay fit dữ liệu. TFDS imdb_reviews; local JSONL train/test có id, text, label với neg=0, pos=1. Chuẩn hóa HTML/NFC, gộp khoảng trắng; giữ test chuẩn. Giữ ràng buộc: LABEL_NAMES=['neg', 'pos']. Trả code kèm imports cần dùng; dùng đúng I/O và các lựa chọn đã có trong context.
+Cập nhật biểu diễn/căn chỉnh; chỉ fit train, giữ gold/ID, special IDs và mask; giữ trạng thái và API khôi phục biểu diễn.
+Ý tưởng tiền xử lí: 1. NFKC, HTML unescape, đổi thẻ br thành khoảng trắng rồi gộp whitespace. Không xóa stopword hoặc từ phủ định như “not”, vì chúng có thể đảo sentiment. 2. Chia nhóm train/validation trước khi fit; lowercase do vectorizer thực hiện. Không cắt review theo độ dài nên những từ sentiment ở cuối vẫn có thể đóng góp. 3. Fit TF-IDF word unigram/bigram và char_wb n-gram 3–5 trên train. Word bigram giữ cụm như “not good”; character features giúp biến thể từ/cách viết. Giới hạn vocabulary và min_df để kiểm soát nhiễu/chi phí. 4. Tính binary NB log-count ratio từ document presence của train với smoothing, rồi nhân đặc trưng TF-IDF trước LinearSVC. Ratio có thể âm nên không đưa ma trận này vào MultinomialNB. Chỉ transform val/test; mẫu rỗng vẫn được chấm.
+Chỉ trả code hoàn chỉnh kèm imports và comment chỉ chỗ thay/thêm. Tự chọn tham số điều chỉnh được; giữ nhãn/ID và ràng buộc bài, không ép giống các giá trị tham khảo.
 
-Context m003 — sha(text):
-[Dán tóm tắt m003]
+Context s01 — Load dữ liệu và chia train/validation/test:
+[Dán tóm tắt s01]
 ```
 
 ### Tóm tắt context để dùng tiếp
 
-<a id="context-m010"></a>
+<a id="context-s02"></a>
 
 ```text
-Tóm tắt giao diện canonical_rows(rows, split) từ code dưới đây. Giữ chữ ký, I/O, shape/dtype/device, các tham số đã chọn và trạng thái dùng chung; chỉ trả chữ, không viết lại code hoặc đoán thông tin thiếu.
-
-Context m003 — sha(text):
-[Dán tóm tắt m003]
+Tóm tắt code hiện tại trong tối đa 3 dòng, mục tiêu không quá 80 token và ngắn hơn input. Chỉ ghi chữ ký cần gọi, I/O (shape/mask nếu có), cấu hình và trạng thái mà bước sau cần. Không giải thích chức năng, không nhắc lại code; không đoán giá trị thiếu.
 ```
 
 ```python
-# Dán code hiện tại của canonical_rows(rows, split) tại đây.
+# Dán code hiện tại vừa tạo/sửa của phần việc này.
 ```
 
-## Bước 5: load_raw(split) — phần 1/3
+## Bước 3: Xử lí mô hình — Model và giao diện sử dụng
 
 <!-- module
-ID: m011
-Depends: m005, m010
+ID: s03
+Group: model
 Kind: code
-Budget: input=800; output=1000; reserve=200
+Depends: s02
+Budget: input=650; output=950; reserve=200
 Summary: yes
-Target: baseline.ipynb#cell=5; lines=20-24
-Summary budget: input=1200; output=500; reserve=300
-Config owns: DATA_DIR, TASK
-Config uses: DATA_DIR, LABEL_NAMES, TASK
--->
-
-### Context cần chuẩn bị
-
-Lần lượt dùng các prompt tóm tắt sau, hoặc dùng lại context khớp code hiện tại:
-
-1. [read_jsonl(path)](#context-m005)
-2. [canonical_rows(rows, split)](#context-m010)
-
-### Prompt tạo hoặc sửa module
-
-```text
-Viết load_raw(split) — phần 1/3. Triển khai đúng chức năng và hợp đồng đầu vào/đầu ra của module theo context. Giữ ràng buộc: DATA_DIR=Path('data/sentiment_imdb_reviews'). Tự chọn TASK phù hợp và khai báo ngay trong module này; nêu ngắn lý do. Dùng lại LABEL_NAMES từ context, không chọn hoặc khai báo lại giá trị. Đây là phần 1/3 của cùng callable; giữ scope và biến trung gian từ context, chỉ chạy khi đủ phần. Trả code kèm imports cần dùng; dùng đúng I/O và các lựa chọn đã có trong context.
-
-Context m005 — read_jsonl(path):
-[Dán tóm tắt m005]
-
-Context m010 — canonical_rows(rows, split):
-[Dán tóm tắt m010]
-```
-
-### Tóm tắt context để dùng tiếp
-
-<a id="context-m011"></a>
-
-```text
-Tóm tắt giao diện load_raw(split) — phần 1/3 từ code dưới đây. Giữ chữ ký, I/O, shape/dtype/device, các tham số đã chọn và trạng thái dùng chung; chỉ trả chữ, không viết lại code hoặc đoán thông tin thiếu.
-
-Context m005 — read_jsonl(path):
-[Dán tóm tắt m005]
-
-Context m010 — canonical_rows(rows, split):
-[Dán tóm tắt m010]
-```
-
-```python
-# Dán code hiện tại của load_raw(split) — phần 1/3 tại đây.
-```
-
-## Bước 6: load_raw(split) — phần 2/3
-
-<!-- module
-ID: m012
-Depends: m005, m010, m011
-Kind: code
-Budget: input=800; output=1000; reserve=200
-Summary: yes
-Target: baseline.ipynb#cell=5; lines=25-71
-Summary budget: input=1200; output=500; reserve=300
-Config uses: DATA_DIR, LABEL_NAMES, TASK
--->
-
-### Context cần chuẩn bị
-
-Lần lượt dùng các prompt tóm tắt sau, hoặc dùng lại context khớp code hiện tại:
-
-1. [read_jsonl(path)](#context-m005)
-2. [canonical_rows(rows, split)](#context-m010)
-3. [load_raw(split) — phần 1/3](#context-m011)
-
-### Prompt tạo hoặc sửa module
-
-```text
-Viết load_raw(split) — phần 2/3. Triển khai đúng chức năng và hợp đồng đầu vào/đầu ra của module theo context. Dùng lại DATA_DIR, LABEL_NAMES, TASK từ context, không chọn hoặc khai báo lại giá trị. Đây là phần 2/3 của cùng callable; giữ scope và biến trung gian từ context, chỉ chạy khi đủ phần. Trả code kèm imports cần dùng; dùng đúng I/O và các lựa chọn đã có trong context.
-
-Context m005 — read_jsonl(path):
-[Dán tóm tắt m005]
-
-Context m010 — canonical_rows(rows, split):
-[Dán tóm tắt m010]
-
-Context m011 — load_raw(split) — phần 1/3:
-[Dán tóm tắt m011]
-```
-
-### Tóm tắt context để dùng tiếp
-
-<a id="context-m012"></a>
-
-```text
-Tóm tắt giao diện load_raw(split) — phần 2/3 từ code dưới đây. Giữ chữ ký, I/O, shape/dtype/device, các tham số đã chọn và trạng thái dùng chung; chỉ trả chữ, không viết lại code hoặc đoán thông tin thiếu.
-
-Context m005 — read_jsonl(path):
-[Dán tóm tắt m005]
-
-Context m010 — canonical_rows(rows, split):
-[Dán tóm tắt m010]
-
-Context m011 — load_raw(split) — phần 1/3:
-[Dán tóm tắt m011]
-```
-
-```python
-# Dán code hiện tại của load_raw(split) — phần 2/3 tại đây.
-```
-
-## Bước 7: load_raw(split) — phần 3/3
-
-<!-- module
-ID: m013
-Depends: m005, m010, m011, m012
-Kind: code
-Budget: input=800; output=1000; reserve=200
-Summary: yes
-Target: baseline.ipynb#cell=5; lines=72-72
-Summary budget: input=1200; output=500; reserve=300
-Config uses: DATA_DIR, LABEL_NAMES, TASK
--->
-
-### Context cần chuẩn bị
-
-Lần lượt dùng các prompt tóm tắt sau, hoặc dùng lại context khớp code hiện tại:
-
-1. [read_jsonl(path)](#context-m005)
-2. [canonical_rows(rows, split)](#context-m010)
-3. [load_raw(split) — phần 1/3](#context-m011)
-4. [load_raw(split) — phần 2/3](#context-m012)
-
-### Prompt tạo hoặc sửa module
-
-```text
-Viết load_raw(split) — phần 3/3. Triển khai đúng chức năng và hợp đồng đầu vào/đầu ra của module theo context. Dùng lại DATA_DIR, LABEL_NAMES, TASK từ context, không chọn hoặc khai báo lại giá trị. Đây là phần 3/3 của cùng callable; giữ scope và biến trung gian từ context, chỉ chạy khi đủ phần. Trả code kèm imports cần dùng; dùng đúng I/O và các lựa chọn đã có trong context.
-
-Context m005 — read_jsonl(path):
-[Dán tóm tắt m005]
-
-Context m010 — canonical_rows(rows, split):
-[Dán tóm tắt m010]
-
-Context m011 — load_raw(split) — phần 1/3:
-[Dán tóm tắt m011]
-
-Context m012 — load_raw(split) — phần 2/3:
-[Dán tóm tắt m012]
-```
-
-### Tóm tắt context để dùng tiếp
-
-<a id="context-m013"></a>
-
-```text
-Tóm tắt giao diện load_raw(split) — phần 3/3 từ code dưới đây. Giữ chữ ký, I/O, shape/dtype/device, các tham số đã chọn và trạng thái dùng chung; chỉ trả chữ, không viết lại code hoặc đoán thông tin thiếu.
-
-Context m005 — read_jsonl(path):
-[Dán tóm tắt m005]
-
-Context m010 — canonical_rows(rows, split):
-[Dán tóm tắt m010]
-
-Context m011 — load_raw(split) — phần 1/3:
-[Dán tóm tắt m011]
-
-Context m012 — load_raw(split) — phần 2/3:
-[Dán tóm tắt m012]
-```
-
-```python
-# Dán code hiện tại của load_raw(split) — phần 3/3 tại đây.
-```
-
-## Bước 8: Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train…
-
-<!-- module
-ID: m014
-Depends: m003, m009, m010, m013
-Kind: code
-Budget: input=800; output=1000; reserve=200
-Summary: yes
-Target: baseline.ipynb#cell=5; lines=74-94
-Summary budget: input=1200; output=500; reserve=300
-Config owns: SEED, SOURCE
-Config uses: LABEL_NAMES, SEED, SOURCE
--->
-
-### Context cần chuẩn bị
-
-Lần lượt dùng các prompt tóm tắt sau, hoặc dùng lại context khớp code hiện tại:
-
-1. [sha(text)](#context-m003)
-2. [normalize_text(text)](#context-m009)
-3. [canonical_rows(rows, split)](#context-m010)
-4. [load_raw(split) — phần 3/3](#context-m013)
-
-### Prompt tạo hoặc sửa module
-
-```text
-Viết Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train…. Giữ ràng buộc: SEED=42. Khai báo cùng phần này: SOURCE mô tả đúng dataset và phiên bản được chỉ định trong phần dữ liệu. Dùng lại LABEL_NAMES từ context, không chọn hoặc khai báo lại giá trị. Trả code kèm imports cần dùng; dùng đúng I/O và các lựa chọn đã có trong context.
-
-Context m003 — sha(text):
-[Dán tóm tắt m003]
-
-Context m009 — normalize_text(text):
-[Dán tóm tắt m009]
-
-Context m010 — canonical_rows(rows, split):
-[Dán tóm tắt m010]
-
-Context m013 — load_raw(split) — phần 3/3:
-[Dán tóm tắt m013]
-```
-
-### Tóm tắt context để dùng tiếp
-
-<a id="context-m014"></a>
-
-```text
-Tóm tắt giao diện Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train… từ code dưới đây. Giữ chữ ký, I/O, shape/dtype/device, các tham số đã chọn và trạng thái dùng chung; chỉ trả chữ, không viết lại code hoặc đoán thông tin thiếu.
-
-Context m003 — sha(text):
-[Dán tóm tắt m003]
-
-Context m009 — normalize_text(text):
-[Dán tóm tắt m009]
-
-Context m010 — canonical_rows(rows, split):
-[Dán tóm tắt m010]
-
-Context m013 — load_raw(split) — phần 3/3:
-[Dán tóm tắt m013]
-```
-
-```python
-# Dán code hiện tại của Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train… tại đây.
-```
-
-## Bước 9: Đọc dữ liệu, chuẩn hóa và chia validation
-
-<!-- module
-ID: m015
-Depends: m010, m014
-Kind: code
-Budget: input=800; output=1000; reserve=200
-Summary: yes
-Target: baseline.ipynb#cell=5; lines=95-99
-Summary budget: input=1200; output=500; reserve=300
-Config uses: LABEL_NAMES
--->
-
-### Context cần chuẩn bị
-
-Lần lượt dùng các prompt tóm tắt sau, hoặc dùng lại context khớp code hiện tại:
-
-1. [canonical_rows(rows, split)](#context-m010)
-2. [Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train…](#context-m014)
-
-### Prompt tạo hoặc sửa module
-
-```text
-Viết Đọc dữ liệu, chuẩn hóa và chia validation. Dùng lại LABEL_NAMES từ context, không chọn hoặc khai báo lại giá trị. Trả code kèm imports cần dùng; dùng đúng I/O và các lựa chọn đã có trong context.
-
-Context m010 — canonical_rows(rows, split):
-[Dán tóm tắt m010]
-
-Context m014 — Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train…:
-[Dán tóm tắt m014]
-```
-
-### Tóm tắt context để dùng tiếp
-
-<a id="context-m015"></a>
-
-```text
-Tóm tắt giao diện Đọc dữ liệu, chuẩn hóa và chia validation từ code dưới đây. Giữ chữ ký, I/O, shape/dtype/device, các tham số đã chọn và trạng thái dùng chung; chỉ trả chữ, không viết lại code hoặc đoán thông tin thiếu.
-
-Context m010 — canonical_rows(rows, split):
-[Dán tóm tắt m010]
-
-Context m014 — Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train…:
-[Dán tóm tắt m014]
-```
-
-```python
-# Dán code hiện tại của Đọc dữ liệu, chuẩn hóa và chia validation tại đây.
-```
-
-## Bước 10: build_features()
-
-<!-- module
-ID: m016
-Depends: none
-Kind: code
-Budget: input=800; output=1000; reserve=200
-Summary: yes
-Target: baseline.ipynb#cell=7; lines=1-8
-Summary budget: input=1200; output=500; reserve=300
-Config owns: CHAR_MAX_FEATURES, MIN_DF, WORD_MAX_FEATURES
-Config uses: CHAR_MAX_FEATURES, MIN_DF, WORD_MAX_FEATURES
--->
-
-### Prompt tạo hoặc sửa module
-
-```text
-Viết build_features(). Kết hợp TF-IDF word và char_wb bằng FeatureUnion, chỉ fit train; tự chọn ngram_range và trọng số hai nhánh phù hợp. Tự chọn CHAR_MAX_FEATURES, MIN_DF, WORD_MAX_FEATURES phù hợp và khai báo ngay trong module này; nêu ngắn lý do. Trả code kèm imports cần dùng; dùng đúng I/O và các lựa chọn đã có trong context.
-```
-
-### Tóm tắt context để dùng tiếp
-
-<a id="context-m016"></a>
-
-```text
-Tóm tắt giao diện build_features() từ code dưới đây. Giữ chữ ký, I/O, shape/dtype/device, các tham số đã chọn và trạng thái dùng chung; chỉ trả chữ, không viết lại code hoặc đoán thông tin thiếu.
-```
-
-```python
-# Dán code hiện tại của build_features() tại đây.
-```
-
-## Bước 11: Biểu diễn văn bản chỉ học trên train — X_train, X_val, features…
-
-<!-- module
-ID: m017
-Depends: m014, m016
-Kind: code
-Budget: input=800; output=1000; reserve=200
-Summary: yes
-Target: baseline.ipynb#cell=7; lines=10-23
-Summary budget: input=1200; output=500; reserve=300
-Config owns: NB_RATIO_ALPHA, USE_NB_RATIO
-Config uses: NB_RATIO_ALPHA, USE_NB_RATIO
--->
-
-### Context cần chuẩn bị
-
-Lần lượt dùng các prompt tóm tắt sau, hoặc dùng lại context khớp code hiện tại:
-
-1. [Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train…](#context-m014)
-2. [build_features()](#context-m016)
-
-### Prompt tạo hoặc sửa module
-
-```text
-Viết Biểu diễn văn bản chỉ học trên train — X_train, X_val, features…. Tạo NB log-ratio nhị phân từ presence train với smoothing dương được chọn phù hợp; nhân cùng ratio vào CSR train và validation. Giữ ràng buộc: USE_NB_RATIO=True. Tự chọn NB_RATIO_ALPHA phù hợp và khai báo ngay trong module này; nêu ngắn lý do. Trả code kèm imports cần dùng; dùng đúng I/O và các lựa chọn đã có trong context.
-
-Context m014 — Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train…:
-[Dán tóm tắt m014]
-
-Context m016 — build_features():
-[Dán tóm tắt m016]
-```
-
-### Tóm tắt context để dùng tiếp
-
-<a id="context-m017"></a>
-
-```text
-Tóm tắt giao diện Biểu diễn văn bản chỉ học trên train — X_train, X_val, features… từ code dưới đây. Giữ chữ ký, I/O, shape/dtype/device, các tham số đã chọn và trạng thái dùng chung; chỉ trả chữ, không viết lại code hoặc đoán thông tin thiếu.
-
-Context m014 — Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train…:
-[Dán tóm tắt m014]
-
-Context m016 — build_features():
-[Dán tóm tắt m016]
-```
-
-```python
-# Dán code hiện tại của Biểu diễn văn bản chỉ học trên train — X_train, X_val, features… tại đây.
-```
-
-## Bước 12: make_classifier(parameter)
-
-<!-- module
-ID: m019
-Depends: m014
-Kind: code
-Budget: input=800; output=1000; reserve=200
-Summary: yes
+Summary budget: input=1400; output=80; reserve=200
 Target: baseline.ipynb#cell=9; lines=2-4
-Summary budget: input=1200; output=500; reserve=300
-Config owns: MAX_ITER, TOLERANCE
-Config uses: MAX_ITER, SEED, TOLERANCE
+Config owns: architecture
+Config uses: preprocess_1
 -->
 
 ### Context cần chuẩn bị
 
-Lần lượt dùng các prompt tóm tắt sau, hoặc dùng lại context khớp code hiện tại:
-
-1. [Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train…](#context-m014)
+- [Biểu diễn và căn chỉnh](#context-s02)
 
 ### Prompt tạo hoặc sửa module
 
 ```text
-Viết make_classifier(parameter). Tạo classifier LinearSVC theo API đã chốt; kiểm hội tụ và dùng cấu hình lựa chọn trên validation. Tự chọn MAX_ITER, TOLERANCE phù hợp và khai báo ngay trong module này; nêu ngắn lý do. Dùng lại SEED từ context, không chọn hoặc khai báo lại giá trị. Trả code kèm imports cần dùng; dùng đúng I/O và các lựa chọn đã có trong context.
+Viết model hoàn chỉnh dùng các thành phần trong context; giữ API hiện có hoặc thêm adapter tối thiểu. Gồm head/decoder, suy luận và method loss nếu vòng train cần; tự chọn kích thước/dropout, lưu cùng model config.
+Ý tưởng mô hình: Chọn NB-SVM sparse: TF-IDF word/char → log-count ratio giám sát nhị phân → LinearSVC. LinearSVC học biên phân tách giữa positive và negative trên đặc trưng thưa; không có embeddings, tokenizer hoặc encoder pretrained. Hai nhánh có weight word=1.0, char=0.5 để character features bổ sung thay vì lấn át word features. Không dùng pretrained cho tokenizer/embedding/model tác vụ.
+API hiện có: RawClassifier: __init__(num_classes); forward(texts).
+Chỉ trả code hoàn chỉnh kèm imports và comment chỉ chỗ thay/thêm. Tự chọn tham số điều chỉnh được; giữ nhãn/ID và ràng buộc bài, không ép giống các giá trị tham khảo.
 
-Context m014 — Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train…:
-[Dán tóm tắt m014]
+Context s02 — Biểu diễn và căn chỉnh:
+[Dán tóm tắt s02]
 ```
 
 ### Tóm tắt context để dùng tiếp
 
-<a id="context-m019"></a>
+<a id="context-s03"></a>
 
 ```text
-Tóm tắt giao diện make_classifier(parameter) từ code dưới đây. Giữ chữ ký, I/O, shape/dtype/device, các tham số đã chọn và trạng thái dùng chung; chỉ trả chữ, không viết lại code hoặc đoán thông tin thiếu.
-
-Context m014 — Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train…:
-[Dán tóm tắt m014]
+Tóm tắt code hiện tại trong tối đa 3 dòng, mục tiêu không quá 80 token và ngắn hơn input. Chỉ ghi chữ ký cần gọi, I/O (shape/mask nếu có), cấu hình và trạng thái mà bước sau cần. Không giải thích chức năng, không nhắc lại code; không đoán giá trị thiếu.
 ```
 
 ```python
-# Dán code hiện tại của make_classifier(parameter) tại đây.
+# Dán code hiện tại vừa tạo/sửa của phần việc này.
 ```
 
-## Bước 13: classification_metrics(y, pred)
+## Bước 4: Siêu tham số
 
 <!-- module
-ID: m020
-Depends: m010
+ID: s04
+Group: hyperparameters
 Kind: code
-Budget: input=800; output=1000; reserve=200
+Depends: s02, s03
+Budget: input=650; output=950; reserve=200
 Summary: yes
-Target: baseline.ipynb#cell=9; lines=6-8
-Summary budget: input=1200; output=500; reserve=300
-Config uses: LABEL_NAMES
+Summary budget: input=1400; output=80; reserve=200
+Config owns: training_config
+Config uses: preprocess_1, architecture
 -->
 
 ### Context cần chuẩn bị
 
-Lần lượt dùng các prompt tóm tắt sau, hoặc dùng lại context khớp code hiện tại:
-
-1. [canonical_rows(rows, split)](#context-m010)
+- [Biểu diễn và căn chỉnh](#context-s02)
+- [Model và giao diện sử dụng](#context-s03)
 
 ### Prompt tạo hoặc sửa module
 
 ```text
-Viết classification_metrics(y, pred). Viết classification_metrics(y,pred) trả macro_f1 và accuracy, giữ đủ nhãn và zero_division bằng0. macro-F1 và accuracy sklearn, labels=[0,1], zero_division=0; kết quả test không dùng chọn C. classification_metrics(y,pred) giữ interface hiện tại. Kết quả giữ các trường accuracy, macro_f1. Dùng lại LABEL_NAMES từ context, không chọn hoặc khai báo lại giá trị. Trả code kèm imports cần dùng; dùng đúng I/O và các lựa chọn đã có trong context.
+Chọn các siêu tham số huấn luyện/solver phù hợp: batch, learning rate hoặc C, regularization, số epoch/lặp, patience và clip khi cần; nêu lý do bằng comment ngắn. Giữ kích thước, tokenizer và special IDs đã chốt ở context; không định nghĩa lại chúng. Đặt constants trước nơi khởi tạo tương ứng; tạo lại loader khi đổi batch. Trả cấu hình cố định để bước training dùng; chưa viết vòng train.
+Phương pháp: Chọn NB-SVM sparse: TF-IDF word/char → log-count ratio giám sát nhị phân → LinearSVC. LinearSVC học biên phân tách giữa positive và negative trên đặc trưng thưa; không có embeddings, tokenizer hoặc encoder pretrained. Hai nhánh có weight word=1.0, char=0.5 để character features bổ sung thay vì lấn át word features. Metric: macro_f1. Neural: precision thường, nhắm GPU 32 GB; không AMP, dò VRAM hoặc tự đổi batch.
+Chỉ trả code hoàn chỉnh kèm imports và comment chỉ chỗ thay/thêm. Tự chọn tham số điều chỉnh được; giữ nhãn/ID và ràng buộc bài, không ép giống các giá trị tham khảo.
 
-Context m010 — canonical_rows(rows, split):
-[Dán tóm tắt m010]
+Context s02 — Biểu diễn và căn chỉnh:
+[Dán tóm tắt s02]
+
+Context s03 — Model và giao diện sử dụng:
+[Dán tóm tắt s03]
 ```
 
 ### Tóm tắt context để dùng tiếp
 
-<a id="context-m020"></a>
+<a id="context-s04"></a>
 
 ```text
-Tóm tắt giao diện classification_metrics(y, pred) từ code dưới đây. Giữ chữ ký, I/O, shape/dtype/device, các tham số đã chọn và trạng thái dùng chung; chỉ trả chữ, không viết lại code hoặc đoán thông tin thiếu.
-
-Context m010 — canonical_rows(rows, split):
-[Dán tóm tắt m010]
+Tóm tắt code hiện tại trong tối đa 3 dòng, mục tiêu không quá 80 token và ngắn hơn input. Chỉ ghi chữ ký cần gọi, I/O (shape/mask nếu có), cấu hình và trạng thái mà bước sau cần. Không giải thích chức năng, không nhắc lại code; không đoán giá trị thiếu.
 ```
 
 ```python
-# Dán code hiện tại của classification_metrics(y, pred) tại đây.
+# Dán code hiện tại vừa tạo/sửa của phần việc này.
 ```
 
-## Bước 14: Mô hình, huấn luyện và chọn checkpoint — CHECKPOINT_PATH, best_score, classifier…
+## Bước 5: Loss, optimizer và training loop
 
 <!-- module
-ID: m021
-Depends: m010, m014, m017, m019, m020
+ID: s05
+Group: training
 Kind: code
-Budget: input=800; output=1000; reserve=200
-Summary: yes
-Target: baseline.ipynb#cell=9; lines=10-35
-Summary budget: input=1200; output=500; reserve=300
-Config owns: C_VALUES, OUTPUT_DIR, PARAMETERS, PRIMARY_METRIC
-Config uses: C_VALUES, LABEL_NAMES, OUTPUT_DIR, PARAMETERS, PRIMARY_METRIC
--->
-
-### Context cần chuẩn bị
-
-Lần lượt dùng các prompt tóm tắt sau, hoặc dùng lại context khớp code hiện tại:
-
-1. [canonical_rows(rows, split)](#context-m010)
-2. [Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train…](#context-m014)
-3. [Biểu diễn văn bản chỉ học trên train — X_train, X_val, features…](#context-m017)
-4. [make_classifier(parameter)](#context-m019)
-5. [classification_metrics(y, pred)](#context-m020)
-
-### Prompt tạo hoặc sửa module
-
-```text
-Viết Mô hình, huấn luyện và chọn checkpoint — CHECKPOINT_PATH, best_score, classifier…. Fit pipeline trên train theo các ứng viên siêu tham số được chọn; chọn bằng metric validation và lưu đủ biểu diễn, classifier và nhãn để reload. Không fit lại trên test hoặc train+validation. Giữ ràng buộc: PRIMARY_METRIC='macro_f1'. Tự chọn C_VALUES phù hợp và khai báo ngay trong module này; nêu ngắn lý do. Khai báo cùng phần này: OUTPUT_DIR được suy ra từ dữ liệu/context hoặc API tương ứng; PARAMETERS được suy ra từ dữ liệu/context hoặc API tương ứng. Dùng lại LABEL_NAMES từ context, không chọn hoặc khai báo lại giá trị. Trả code kèm imports cần dùng; dùng đúng I/O và các lựa chọn đã có trong context.
-
-Context m010 — canonical_rows(rows, split):
-[Dán tóm tắt m010]
-
-Context m014 — Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train…:
-[Dán tóm tắt m014]
-
-Context m017 — Biểu diễn văn bản chỉ học trên train — X_train, X_val, features…:
-[Dán tóm tắt m017]
-
-Context m019 — make_classifier(parameter):
-[Dán tóm tắt m019]
-
-Context m020 — classification_metrics(y, pred):
-[Dán tóm tắt m020]
-```
-
-### Tóm tắt context để dùng tiếp
-
-<a id="context-m021"></a>
-
-```text
-Tóm tắt giao diện Mô hình, huấn luyện và chọn checkpoint — CHECKPOINT_PATH, best_score, classifier… từ code dưới đây. Giữ chữ ký, I/O, shape/dtype/device, các tham số đã chọn và trạng thái dùng chung; chỉ trả chữ, không viết lại code hoặc đoán thông tin thiếu.
-
-Context m010 — canonical_rows(rows, split):
-[Dán tóm tắt m010]
-
-Context m014 — Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train…:
-[Dán tóm tắt m014]
-
-Context m017 — Biểu diễn văn bản chỉ học trên train — X_train, X_val, features…:
-[Dán tóm tắt m017]
-
-Context m019 — make_classifier(parameter):
-[Dán tóm tắt m019]
-
-Context m020 — classification_metrics(y, pred):
-[Dán tóm tắt m020]
-```
-
-```python
-# Dán code hiện tại của Mô hình, huấn luyện và chọn checkpoint — CHECKPOINT_PATH, best_score, classifier… tại đây.
-```
-
-## Bước 15: Nạp lại, đánh giá test một lần và dự đoán — best
-
-<!-- module
-ID: m022
-Depends: m021
-Kind: code
-Budget: input=800; output=1000; reserve=200
-Summary: yes
-Target: baseline.ipynb#cell=11; lines=2-2
-Summary budget: input=1200; output=500; reserve=300
--->
-
-### Context cần chuẩn bị
-
-Lần lượt dùng các prompt tóm tắt sau, hoặc dùng lại context khớp code hiện tại:
-
-1. [Mô hình, huấn luyện và chọn checkpoint — CHECKPOINT_PATH, best_score, classifier…](#context-m021)
-
-### Prompt tạo hoặc sửa module
-
-```text
-Viết Nạp lại, đánh giá test một lần và dự đoán — best. Reload toàn bộ pipeline đã chọn, khôi phục cấu hình kiến trúc và tokenizer/vocabulary từ checkpoint hoặc context tương ứng; kiểm lại validation rồi đánh giá held-out đúng giao thức, không chọn lại tham số. Trả code kèm imports cần dùng; dùng đúng I/O và các lựa chọn đã có trong context.
-
-Context m021 — Mô hình, huấn luyện và chọn checkpoint — CHECKPOINT_PATH, best_score, classifier…:
-[Dán tóm tắt m021]
-```
-
-### Tóm tắt context để dùng tiếp
-
-<a id="context-m022"></a>
-
-```text
-Tóm tắt giao diện Nạp lại, đánh giá test một lần và dự đoán — best từ code dưới đây. Giữ chữ ký, I/O, shape/dtype/device, các tham số đã chọn và trạng thái dùng chung; chỉ trả chữ, không viết lại code hoặc đoán thông tin thiếu.
-
-Context m021 — Mô hình, huấn luyện và chọn checkpoint — CHECKPOINT_PATH, best_score, classifier…:
-[Dán tóm tắt m021]
-```
-
-```python
-# Dán code hiện tại của Nạp lại, đánh giá test một lần và dự đoán — best tại đây.
-```
-
-## Bước 16: predict_texts(texts)
-
-<!-- module
-ID: m023
-Depends: m009, m022
-Kind: code
-Budget: input=800; output=1000; reserve=200
-Summary: yes
-Target: baseline.ipynb#cell=11; lines=4-7
-Summary budget: input=1200; output=500; reserve=300
--->
-
-### Context cần chuẩn bị
-
-Lần lượt dùng các prompt tóm tắt sau, hoặc dùng lại context khớp code hiện tại:
-
-1. [normalize_text(text)](#context-m009)
-2. [Nạp lại, đánh giá test một lần và dự đoán — best](#context-m022)
-
-### Prompt tạo hoặc sửa module
-
-```text
-Viết predict_texts(texts). Giữ predict_texts(texts), reload features, ratio và classifier; đối chiếu validation trước khi chấm test. Viết phần reload đầy đủ preprocessing và model đã chọn, kiểm lại validation trước khi chấm held-out đúng một lần. macro-F1 và accuracy sklearn, labels=[0,1], zero_division=0; kết quả test không dùng chọn C. Trả code kèm imports cần dùng; dùng đúng I/O và các lựa chọn đã có trong context.
-
-Context m009 — normalize_text(text):
-[Dán tóm tắt m009]
-
-Context m022 — Nạp lại, đánh giá test một lần và dự đoán — best:
-[Dán tóm tắt m022]
-```
-
-### Tóm tắt context để dùng tiếp
-
-<a id="context-m023"></a>
-
-```text
-Tóm tắt giao diện predict_texts(texts) từ code dưới đây. Giữ chữ ký, I/O, shape/dtype/device, các tham số đã chọn và trạng thái dùng chung; chỉ trả chữ, không viết lại code hoặc đoán thông tin thiếu.
-
-Context m009 — normalize_text(text):
-[Dán tóm tắt m009]
-
-Context m022 — Nạp lại, đánh giá test một lần và dự đoán — best:
-[Dán tóm tắt m022]
-```
-
-```python
-# Dán code hiện tại của predict_texts(texts) tại đây.
-```
-
-## Bước 17: Nạp lại, đánh giá test một lần và dự đoán — overlap, raw_test, reloaded_val…
-
-<!-- module
-ID: m024
-Depends: m003, m009, m010, m013, m014, m020, m021, m022, m023
-Kind: code
-Budget: input=800; output=1000; reserve=200
-Summary: yes
-Target: baseline.ipynb#cell=11; lines=10-29
-Summary budget: input=1200; output=500; reserve=300
-Config uses: LABEL_NAMES, PRIMARY_METRIC
--->
-
-### Context cần chuẩn bị
-
-Lần lượt dùng các prompt tóm tắt sau, hoặc dùng lại context khớp code hiện tại:
-
-1. [sha(text)](#context-m003)
-2. [normalize_text(text)](#context-m009)
-3. [canonical_rows(rows, split)](#context-m010)
-4. [load_raw(split) — phần 3/3](#context-m013)
-5. [Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train…](#context-m014)
-6. [classification_metrics(y, pred)](#context-m020)
-7. [Mô hình, huấn luyện và chọn checkpoint — CHECKPOINT_PATH, best_score, classifier…](#context-m021)
-8. [Nạp lại, đánh giá test một lần và dự đoán — best](#context-m022)
-9. [predict_texts(texts)](#context-m023)
-
-### Prompt tạo hoặc sửa module
-
-```text
-Viết Nạp lại, đánh giá test một lần và dự đoán — overlap, raw_test, reloaded_val…. Dùng pipeline đã reload để kiểm validation, chấm held-out theo đúng ID và metric, lưu đủ predictions/kết quả; không fit lại hoặc chọn tham số bằng test. Dùng lại LABEL_NAMES, PRIMARY_METRIC từ context, không chọn hoặc khai báo lại giá trị. Trả code kèm imports cần dùng; dùng đúng I/O và các lựa chọn đã có trong context.
-
-Context m003 — sha(text):
-[Dán tóm tắt m003]
-
-Context m009 — normalize_text(text):
-[Dán tóm tắt m009]
-
-Context m010 — canonical_rows(rows, split):
-[Dán tóm tắt m010]
-
-Context m013 — load_raw(split) — phần 3/3:
-[Dán tóm tắt m013]
-
-Context m014 — Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train…:
-[Dán tóm tắt m014]
-
-Context m020 — classification_metrics(y, pred):
-[Dán tóm tắt m020]
-
-Context m021 — Mô hình, huấn luyện và chọn checkpoint — CHECKPOINT_PATH, best_score, classifier…:
-[Dán tóm tắt m021]
-
-Context m022 — Nạp lại, đánh giá test một lần và dự đoán — best:
-[Dán tóm tắt m022]
-
-Context m023 — predict_texts(texts):
-[Dán tóm tắt m023]
-```
-
-### Tóm tắt context để dùng tiếp
-
-<a id="context-m024"></a>
-
-```text
-Tóm tắt giao diện Nạp lại, đánh giá test một lần và dự đoán — overlap, raw_test, reloaded_val… từ code dưới đây. Giữ chữ ký, I/O, shape/dtype/device, các tham số đã chọn và trạng thái dùng chung; chỉ trả chữ, không viết lại code hoặc đoán thông tin thiếu.
-
-Context m003 — sha(text):
-[Dán tóm tắt m003]
-
-Context m009 — normalize_text(text):
-[Dán tóm tắt m009]
-
-Context m010 — canonical_rows(rows, split):
-[Dán tóm tắt m010]
-
-Context m013 — load_raw(split) — phần 3/3:
-[Dán tóm tắt m013]
-
-Context m014 — Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train…:
-[Dán tóm tắt m014]
-
-Context m020 — classification_metrics(y, pred):
-[Dán tóm tắt m020]
-
-Context m021 — Mô hình, huấn luyện và chọn checkpoint — CHECKPOINT_PATH, best_score, classifier…:
-[Dán tóm tắt m021]
-
-Context m022 — Nạp lại, đánh giá test một lần và dự đoán — best:
-[Dán tóm tắt m022]
-
-Context m023 — predict_texts(texts):
-[Dán tóm tắt m023]
-```
-
-```python
-# Dán code hiện tại của Nạp lại, đánh giá test một lần và dự đoán — overlap, raw_test, reloaded_val… tại đây.
-```
-
-## Bước 18: Nạp lại, đánh giá test một lần và dự đoán — f, pred, row
-
-<!-- module
-ID: m025
-Depends: m010, m014, m021, m022, m023, m024
-Kind: code
-Budget: input=800; output=1000; reserve=200
-Summary: yes
-Target: baseline.ipynb#cell=11; lines=30-38
-Summary budget: input=1200; output=500; reserve=300
-Config owns: VERSIONS
-Config uses: LABEL_NAMES, OUTPUT_DIR, VERSIONS
--->
-
-### Context cần chuẩn bị
-
-Lần lượt dùng các prompt tóm tắt sau, hoặc dùng lại context khớp code hiện tại:
-
-1. [canonical_rows(rows, split)](#context-m010)
-2. [Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train…](#context-m014)
-3. [Mô hình, huấn luyện và chọn checkpoint — CHECKPOINT_PATH, best_score, classifier…](#context-m021)
-4. [Nạp lại, đánh giá test một lần và dự đoán — best](#context-m022)
-5. [predict_texts(texts)](#context-m023)
-6. [Nạp lại, đánh giá test một lần và dự đoán — overlap, raw_test, reloaded_val…](#context-m024)
-
-### Prompt tạo hoặc sửa module
-
-```text
-Viết Nạp lại, đánh giá test một lần và dự đoán — f, pred, row. Dùng pipeline đã reload để kiểm validation, chấm held-out theo đúng ID và metric, lưu đủ predictions/kết quả; không fit lại hoặc chọn tham số bằng test. Khai báo cùng phần này: VERSIONS được suy ra từ dữ liệu/context hoặc API tương ứng. Dùng lại LABEL_NAMES, OUTPUT_DIR từ context, không chọn hoặc khai báo lại giá trị. Trả code kèm imports cần dùng; dùng đúng I/O và các lựa chọn đã có trong context.
-
-Context m010 — canonical_rows(rows, split):
-[Dán tóm tắt m010]
-
-Context m014 — Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train…:
-[Dán tóm tắt m014]
-
-Context m021 — Mô hình, huấn luyện và chọn checkpoint — CHECKPOINT_PATH, best_score, classifier…:
-[Dán tóm tắt m021]
-
-Context m022 — Nạp lại, đánh giá test một lần và dự đoán — best:
-[Dán tóm tắt m022]
-
-Context m023 — predict_texts(texts):
-[Dán tóm tắt m023]
-
-Context m024 — Nạp lại, đánh giá test một lần và dự đoán — overlap, raw_test, reloaded_val…:
-[Dán tóm tắt m024]
-```
-
-### Tóm tắt context để dùng tiếp
-
-<a id="context-m025"></a>
-
-```text
-Tóm tắt giao diện Nạp lại, đánh giá test một lần và dự đoán — f, pred, row từ code dưới đây. Giữ chữ ký, I/O, shape/dtype/device, các tham số đã chọn và trạng thái dùng chung; chỉ trả chữ, không viết lại code hoặc đoán thông tin thiếu.
-
-Context m010 — canonical_rows(rows, split):
-[Dán tóm tắt m010]
-
-Context m014 — Đọc dữ liệu, chuẩn hóa và chia validation — SPLIT_INFO, groups, raw_train…:
-[Dán tóm tắt m014]
-
-Context m021 — Mô hình, huấn luyện và chọn checkpoint — CHECKPOINT_PATH, best_score, classifier…:
-[Dán tóm tắt m021]
-
-Context m022 — Nạp lại, đánh giá test một lần và dự đoán — best:
-[Dán tóm tắt m022]
-
-Context m023 — predict_texts(texts):
-[Dán tóm tắt m023]
-
-Context m024 — Nạp lại, đánh giá test một lần và dự đoán — overlap, raw_test, reloaded_val…:
-[Dán tóm tắt m024]
-```
-
-```python
-# Dán code hiện tại của Nạp lại, đánh giá test một lần và dự đoán — f, pred, row tại đây.
-```
-
-## Bước 19: Kiểm tra kết nối các module
-
-<!-- module
-ID: integration
-Depends: m015, m025
-Kind: integration
-Budget: input=800; output=1000; reserve=200
+Depends: s01, s02, s03, s04
+Budget: input=650; output=950; reserve=200
 Summary: no
+Config uses: splits, preprocess_1, architecture, training_config
 -->
 
 ### Context cần chuẩn bị
 
-Lần lượt dùng các prompt tóm tắt sau, hoặc dùng lại context khớp code hiện tại:
+- [Load dữ liệu và chia train/validation/test](#context-s01)
+- [Biểu diễn và căn chỉnh](#context-s02)
+- [Model và giao diện sử dụng](#context-s03)
+- [Siêu tham số](#context-s04)
 
-1. [Đọc dữ liệu, chuẩn hóa và chia validation](#context-m015)
-2. [Nạp lại, đánh giá test một lần và dự đoán — f, pred, row](#context-m025)
-
-### Prompt ghép và kiểm tra
+### Prompt tạo hoặc sửa module
 
 ```text
-Viết phần kết nối và assertions còn thiếu, kèm imports cần dùng, theo các context dưới đây. Kiểm split/IDs, I/O, metric, cấu hình đã chọn và reload; dùng fit/predict cho pipeline sparse hoặc forward/loss/update cho neural. Không sinh lại toàn bộ notebook hoặc tự chọn lại tham số.
+Bổ sung huấn luyện thật vào notebook hardcore: loss đúng output/mask/target, optimizer chỉ cho tham số được học, train/eval và chọn checkpoint bằng metric validation. Tận dụng loader/model/config trong context; không tạo lại chúng. Với sparse dùng fit/predict và chọn tham số validation, không bịa optimizer/backward. Với neural kiểm forward/loss hữu hạn, backward và một bước update; reload config/weights và trạng thái biểu diễn rồi dùng lại inference hiện có. Giữ ID, metric và chiều tốt hơn của metric; test chỉ chấm sau khi chọn xong, không chọn tham số bằng test.
+Phương pháp: Chọn NB-SVM sparse: TF-IDF word/char → log-count ratio giám sát nhị phân → LinearSVC. LinearSVC học biên phân tách giữa positive và negative trên đặc trưng thưa; không có embeddings, tokenizer hoặc encoder pretrained. Hai nhánh có weight word=1.0, char=0.5 để character features bổ sung thay vì lấn át word features. Metric: macro_f1. Neural: precision thường, nhắm GPU 32 GB; không AMP, dò VRAM hoặc tự đổi batch.
+Chỉ trả code hoàn chỉnh kèm imports và comment chỉ chỗ thay/thêm. Tự chọn tham số điều chỉnh được; giữ nhãn/ID và ràng buộc bài, không ép giống các giá trị tham khảo.
 
-Context m015 — Đọc dữ liệu, chuẩn hóa và chia validation:
-[Dán tóm tắt m015]
+Context s01 — Load dữ liệu và chia train/validation/test:
+[Dán tóm tắt s01]
 
-Context m025 — Nạp lại, đánh giá test một lần và dự đoán — f, pred, row:
-[Dán tóm tắt m025]
+Context s02 — Biểu diễn và căn chỉnh:
+[Dán tóm tắt s02]
+
+Context s03 — Model và giao diện sử dụng:
+[Dán tóm tắt s03]
+
+Context s04 — Siêu tham số:
+[Dán tóm tắt s04]
 ```

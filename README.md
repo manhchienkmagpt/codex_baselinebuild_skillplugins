@@ -87,18 +87,20 @@ Mặc định mỗi bài tạo sáu tệp:
 | `baseline_basic.ipynb` | Bản cơ bản, có huấn luyện |
 | `baseline_hardcore.ipynb` | Mô hình scratch chưa huấn luyện, chỉ suy luận |
 | `huong_giai_quyet.md` | Báo cáo hướng giải quyết bằng tiếng Việt |
-| `baseline_basic_promting.md` | Prompt sửa từng module, code basic đính kèm và các context phụ thuộc |
-| `baseline_hardcore_promting.md` | Prompt tóm tắt code đã tạo, rồi dựng module mới từ các context cần thiết |
+| `baseline_basic_promting.md` | Prompt nâng cấp tiền xử lí, mô hình và siêu tham số từ code basic |
+| `baseline_hardcore_promting.md` | Prompt bổ sung dữ liệu, tiền xử lí, mô hình, siêu tham số và huấn luyện từ hardcore |
 
 ### Sử dụng hai file prompt
 
-Định dạng 3 chỉ giữ context cần chuẩn bị, prompt cần gửi và code đính kèm. Module độc lập đi thẳng vào prompt; module có phụ thuộc liên kết đến các prompt tóm tắt trước đó. Dán context vào các ô có tên và dùng lại khi code/API chưa đổi.
+Định dạng 4 nhóm theo công việc cần thay đổi để triển khai **ý tưởng của baseline tối ưu**. Basic tập trung vào tiền xử lí, mô hình và siêu tham số, tận dụng pipeline huấn luyện sẵn có. Hardcore thêm load/chia dữ liệu và loss, optimizer, training loop. Nhóm lớn có thể tách thành các phần việc hoàn chỉnh như encoder và model sử dụng encoder; không đi lần lượt từng hàm phụ hoặc cắt ngang thân hàm.
 
-Không tạo bước hoặc context fingerprint riêng. Các bước dữ liệu giữ đúng mẫu, ID, nhãn, quy tắc chia split và kiểm tra trùng cần thiết. Code basic đính kèm vẫn giữ nguyên nếu đã có lời gọi fingerprint. Dùng `migrate_prompt_guides.py <task_dir> --refresh` để xem thay đổi cho guide định dạng 3 hiện có; thêm `--write` để lưu.
+Mỗi prompt dùng một chat mới. Prompt nằm trong khối `text`, code basic cần sửa nằm riêng trong khối `python`; thay bằng code hiện tại sau khi chỉnh. Hardcore sinh code từ mô tả và context. Giữ dữ liệu, split, ID, nhãn, metric và các ràng buộc căn chỉnh; tự chọn tham số phù hợp và dùng nhất quán qua context. Không yêu cầu tái tạo toàn bộ notebook tối ưu.
 
-Prompt nằm trong khối `text`, code đính kèm nằm riêng trong khối `python`. Basic phù hợp chỉ cần tóm tắt code hiện có. Hardcore được gửi code để lấy tóm tắt; phiên tạo module chỉ dùng chữ/context. Bỏ các bước imports/cài thư viện/cấu hình chung và mục ghép kết quả: mỗi module trả kèm imports, tự chọn tham số liên quan và nêu ngắn lý do. Tham số dùng chung được khai báo một lần và truyền qua context đến huấn luyện/reload.
+Giao diện ngắn, ổn định được đưa trực tiếp vào prompt. Chỉ tạo prompt tóm tắt khi bước sau thực sự dùng kết quả: tối đa 3 dòng, mục tiêu 80 token và ngắn hơn input, chỉ giữ chữ ký cần gọi, I/O và cấu hình/trạng thái dùng chung. Bỏ các lượt riêng cho hàm phụ không đổi, imports, fingerprint, metric, xuất kết quả và reload.
 
-Quy tắc phiên và ngân sách nằm trong skill/metadata ẩn; kiểm tra offline không xác nhận token thực tế. Các guide giữ phương pháp, dữ liệu và metric của bài toán, cho phép chọn siêu tham số phù hợp. Notebook và báo cáo đã giao được giữ nguyên; hardcore gốc vẫn chỉ suy luận với trọng số chưa huấn luyện.
+Ngân sách an toàn là 1.800 token mỗi phiên trong trần `input + output < 2.000`. Phiên sinh code được trả dài hơn input; chỉ phiên tóm tắt cần output ngắn hơn input. Web chatbot dùng Antigravity CLI không có trần output riêng, nên yêu cầu độ dài trong prompt là kiểm soát mềm. Kiểm tra offline không xác nhận token thực tế hoặc code do chatbot sinh đã chạy thành công.
+
+Dùng `migrate_prompt_guides.py <task_dir>` để xem trước chuyển định dạng 1–3 sang 4; thêm `--write` để lưu. `--refresh` tái tạo định dạng 4 từ notebook/báo cáo hiện tại. Notebook và báo cáo được giữ nguyên; hardcore gốc vẫn chỉ suy luận với trọng số chưa huấn luyện, còn guide hướng dẫn bổ sung huấn luyện.
 
 Workflow đầy đủ tạo sáu file. Gọi notebook engineer hoặc chọn riêng basic/hardcore sẽ có file prompt tương ứng, trừ khi yêu cầu rõ chỉ xuất notebook. Chỉ báo cáo hoặc chỉ optimized không cần tạo prompt mới. Các bài đã sinh không được tự cập nhật hàng loạt.
 

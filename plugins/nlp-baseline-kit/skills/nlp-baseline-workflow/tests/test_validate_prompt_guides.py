@@ -17,6 +17,7 @@ validator = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(validator)
 sys.path.insert(0, str(SKILL / "scripts"))
 import migrate_prompt_guides as migration
+from prompt_modules import render as compact_render
 
 
 def step(number, identifier, kind="code", depends="none", variant="basic"):
@@ -294,7 +295,7 @@ class CompactGuides(unittest.TestCase):
 
     def rendered(self, variant="hardcore"):
         old = migration.render_v2(self.directory, variant, guide(variant))
-        return migration.render(self.directory, variant, old)
+        return compact_render(self.directory, variant, old)
 
     def scan(self, value=None, variant="hardcore"):
         path = self.directory / f"baseline_{variant}_promting.md"
@@ -304,7 +305,7 @@ class CompactGuides(unittest.TestCase):
     def test_formats_1_2_and_3_remain_supported(self):
         for variant in ("basic", "hardcore"):
             for old in (guide(variant), migration.render_v2(self.directory, variant, guide(variant))):
-                value = migration.render(self.directory, variant, old)
+                value = compact_render(self.directory, variant, old)
                 self.assertIn("Format: 3", value)
                 self.assertFalse(self.scan(value, variant)[0])
 
@@ -426,7 +427,7 @@ class FingerprintPolicy(unittest.TestCase):
         # Simulate existing format-3 guides authored before the new policy.
         with patch('prompt_modules.remove_fingerprint_steps', side_effect=lambda content: content):
             for variant in ('basic', 'hardcore'):
-                self.originals[variant] = migration.render(self.directory, variant, guide(variant))
+                self.originals[variant] = compact_render(self.directory, variant, guide(variant))
 
     def write_notebooks(self):
         for name in ('baseline', 'baseline_basic'):
@@ -474,7 +475,7 @@ class FingerprintPolicy(unittest.TestCase):
         self.notebook['cells'][3]['source'] = 'def group_rows(rows):\n    return rows\n'
         self.write_notebooks()
         with patch('prompt_modules.remove_fingerprint_steps', side_effect=lambda content: content):
-            old = migration.render(self.directory, 'hardcore', guide('hardcore'))
+            old = compact_render(self.directory, 'hardcore', guide('hardcore'))
         value = prompt_modules.remove_fingerprint_steps(old)
         self.assertNotIn('sha(text)', value)
         self.assertIn('document_key(row)', value)
