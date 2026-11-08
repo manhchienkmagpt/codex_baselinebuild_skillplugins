@@ -47,6 +47,22 @@ def scan_reference(value: str, directory: Path, expected: str,
         return ""
 
 
+def scan_report_reference(value: str, directory: Path, errors: list[str], label: str) -> str:
+    match = re.fullmatch(r"huong_giai_quyet\.md#lines=(\d+)-(\d+)", value)
+    if not match:
+        errors.append(f"{label}: invalid report reference {value!r}")
+        return ""
+    try:
+        lines = (directory / "huong_giai_quyet.md").read_text(encoding="utf-8").splitlines()
+        start, stop = map(int, match.groups())
+        if not 1 <= start <= stop <= len(lines):
+            raise ValueError("report line bounds must exist")
+        return "\n".join(lines[start - 1:stop])
+    except (OSError, UnicodeError, ValueError) as exc:
+        errors.append(f"{label}: cannot resolve report reference: {exc}")
+        return ""
+
+
 def check_prompt(prompt: str, errors: list[str], warnings: list[str], label: str) -> None:
     if not prompt:
         errors.append(f"{label}: empty prompt")
@@ -234,10 +250,10 @@ FINGERPRINT_WORD = re.compile(r"fingerprint|dấu vân tay|vân tay dữ liệu"
 
 
 def source_attachment_spans(content: str) -> list[tuple[int, int]]:
-    """Only real Python inputs under Code gửi kèm are exempt from prose rules."""
+    """Exempt supplied code/reference fences, never generated prompt instructions."""
     masked = outside_fences(content)
     spans = []
-    for heading in re.finditer(r"^### Code gửi kèm[ \t]*$", masked, re.MULTILINE):
+    for heading in re.finditer(r"^### (Code gửi kèm|Code cần sửa|Code liên quan|Nguồn tham khảo)[ \t]*$", masked, re.MULTILINE):
         following = re.search(r"^#{2,3} ", masked[heading.end():], re.MULTILINE)
         stop = heading.end() + following.start() if following else len(content)
         position, start, fence, language = heading.end(), 0, None, ""
@@ -246,7 +262,7 @@ def source_attachment_spans(content: str) -> list[tuple[int, int]]:
             if fence is None and match:
                 start, fence, language = position, match[1], match[2].strip()
             elif fence is not None and match and match[1][0] == fence[0] and len(match[1]) >= len(fence) and not match[2].strip():
-                if language == "python":
+                if language == "python" or (heading[1] == "Nguồn tham khảo" and language == "markdown"):
                     spans.append((start, position + len(line)))
                 fence = None
             position += len(line)
@@ -452,17 +468,23 @@ def scan_focused_guide(path: Path, variant: str, content: str) -> tuple[list[str
         errors.append("Guide: invalid Token verification")
     if verification == "unverified":
         warnings.append("Gemini token usage is unverified; budgets are allowances, not measured counts")
+    workflow = field_values(header, "Constraint workflow")
+    extracted = workflow == ["extract-before-edit"]
+    if workflow and not extracted:
+        errors.append("Guide: invalid Constraint workflow")
+    reference_workflow = field_values(header, "Reference workflow")
+    reference_guided = reference_workflow == ["report-first"]
+    if reference_workflow and (not reference_guided or not extracted):
+        errors.append("Guide: report-first references require the extraction workflow")
     groups = ("preprocessing", "model", "hyperparameters") if variant == "basic" else (
         "data", "preprocessing", "model", "hyperparameters", "training")
     seen_groups, known, consumed, summarized, owners, budgets = [], {}, set(), set(), {}, {}
 
-    def budget(raw, label, summary=False):
+    def budget(raw, label):
         inp, out = checked_budget(raw, errors, label)
         match = re.fullmatch(r"input=(\d+); output=(\d+); reserve=(\d+)", raw)
         if match and sum(map(int, match.groups())) > 1800:
             errors.append(f"{label}: format-4 allowance must total <= 1800")
-        if summary and not (0 < out <= 80 and out < inp):
-            errors.append(f"{label}: summary output must be <= 80 and smaller than input")
         return inp, out
 
     for index, heading in enumerate(steps):
@@ -498,8 +520,6 @@ def scan_focused_guide(path: Path, variant: str, content: str) -> tuple[list[str
         if len(prompts) != 1 or not prompts[0].strip():
             errors.append(f"{label}: require one complete text prompt")
         prompt = prompts[0] if prompts else ""
-        if "imports" not in prompt:
-            errors.append(f"{label}: response must include required imports")
         if set(re.findall(r"\[Dán tóm tắt ([a-z][a-z0-9_-]*)\]", prompt)) != set(deps):
             errors.append(f"{label}: context slots must match dependencies")
         for dep in deps:
@@ -516,30 +536,99 @@ def scan_focused_guide(path: Path, variant: str, content: str) -> tuple[list[str
                 errors.append(f"{label}: configuration {name} lacks owner context")
         sources = field_values(meta, "Source")
         excerpts = [scan_reference(s, path.parent, "baseline_basic.ipynb", errors, label) for s in sources]
-        attached = fenced_blocks(subsection(block, "Code gửi kèm"), "python")
+        source_heading = "Code cần sửa" if extracted else "Code gửi kèm"
+        attached = fenced_blocks(subsection(block, source_heading), "python")
         if attached != excerpts:
             errors.append(f"{label}: basic attachment differs from its referenced source")
-        if variant == "basic" and not sources and "bổ sung mới" not in subsection(block, "Code gửi kèm").lower():
+        if variant == "basic" and not sources and "bổ sung mới" not in subsection(block, source_heading).lower():
             errors.append(f"{label}: a source-free basic work item must explicitly be new")
         if variant == "hardcore" and (sources or attached or fenced_blocks(subsection(block, "Prompt tạo hoặc sửa module"), "python")):
             errors.append(f"{label}: hardcore generation accepts prose/context only")
         for target in field_values(meta, "Target"):
             scan_reference(target, path.parent, "baseline.ipynb", errors, label)
+        reference_input = ""
+        if reference_guided:
+            material = subsection(block, "Nguồn tham khảo")
+            report_refs = field_values(meta, "Reference report")
+            code_refs = field_values(meta, "Reference code")
+            report_parts = [scan_report_reference(s, path.parent, errors, label) for s in report_refs]
+            code_parts = [scan_reference(s, path.parent, "baseline.ipynb", errors, label) for s in code_refs]
+            if fenced_blocks(material, "markdown") != report_parts or fenced_blocks(material, "python") != code_parts:
+                errors.append(f"{label}: reference attachments must match actual report/code excerpts")
+            missing = single_field(meta, "Reference missing", errors, label)
+            if missing not in ("yes", "no") or (missing == "no" and not (report_refs or code_refs)):
+                errors.append(f"{label}: references must exist or explicitly be marked missing")
+            if missing == "yes" and "chưa mô tả đủ" not in material:
+                errors.append(f"{label}: insufficient references must be disclosed")
+            if f'<a id="references-{identifier}"></a>' not in material:
+                errors.append(f"{label}: missing reference-material anchor")
+            if subsection(block, "Yêu cầu bài toán").strip() or "yêu cầu của bài toán.]" in prompt:
+                errors.append(f"{label}: source-guided work must not require a manual requirements checklist")
+            reference_input = material
+        if extracted:
+            constraints = single_field(meta, "Constraints", errors, label)
+            extraction = subsection(block, "Prompt trích ràng buộc")
+            related = subsection(block, "Code liên quan")
+            related_refs = field_values(meta, "Related source")
+            related_code = [scan_reference(s, path.parent, "baseline_basic.ipynb", errors, label)
+                            for s in related_refs]
+            if fenced_blocks(related, "python") != related_code:
+                errors.append(f"{label}: related attachment differs from its referenced source")
+            expected = "yes" if sources else "no"
+            if constraints != expected:
+                errors.append(f"{label}: extraction is required exactly for existing-code edits")
+            if constraints == "yes":
+                budgets[identifier + ":constraints"] = budget(
+                    single_field(meta, "Constraints budget", errors, label), label + " constraints")
+                texts = fenced_blocks(extraction, "text")
+                if (len(texts) != 1 or "tên/chữ ký" not in texts[0]
+                        or "ràng buộc" not in texts[0] or "chưa sửa code" not in texts[0]):
+                    errors.append(f"{label}: extraction must request existing names/signatures and constraints without editing")
+                if f'<a id="constraints-{identifier}"></a>' not in extraction:
+                    errors.append(f"{label}: missing constraint extraction anchor")
+                handoff = subsection(block, "Prompt tạo hoặc sửa module")
+                if (f"(#constraints-{identifier})" not in handoff
+                        or ("[Dán kết quả phân tích.]" if reference_guided else
+                            "[Dán tên/chữ ký, các ràng buộc đã trích xuất và yêu cầu của bài toán.]") not in prompt):
+                    errors.append(f"{label}: edit must consume extracted signatures and constraints")
+                if not related.strip() or (not reference_guided and not subsection(block, "Yêu cầu bài toán").strip()):
+                    errors.append(f"{label}: edits need related code and task reference inputs")
+                interface_terms = (("Code cần sửa", "Giữ tương thích", "báo trước") if reference_guided else
+                                   ("Code cần sửa", "Giữ nguyên tên", "input/output", "ngoài phạm vi"))
+                if not all(s in prompt for s in interface_terms):
+                    errors.append(f"{label}: edit must preserve interfaces and identify scope changes")
+                if reference_guided and (f"(#references-{identifier})" not in extraction
+                                         or not texts or "nguồn tham khảo" not in texts[0]):
+                    errors.append(f"{label}: analysis must consume current code and reference material")
+            elif extraction.strip() or field_values(meta, "Constraints budget") or related_refs:
+                errors.append(f"{label}: a new module must use context without an extraction session")
+            elif reference_guided and f"(#references-{identifier})" not in subsection(block, "Prompt tạo hoặc sửa module"):
+                errors.append(f"{label}: new modules must consume reference material directly")
         summary = subsection(block, "Tóm tắt context để dùng tiếp")
         if values["Summary"] == "yes":
             summarized.add(identifier)
             budgets[identifier + ":summary"] = budget(
-                single_field(meta, "Summary budget", errors, label), label + " summary", True)
+                single_field(meta, "Summary budget", errors, label), label + " summary")
             texts = fenced_blocks(summary, "text")
             if (f'<a id="context-{identifier}"></a>' not in summary or len(texts) != 1
                     or not fenced_blocks(summary, "python")):
                 errors.append(f"{label}: summary needs an anchor, prompt and current-code input")
-            if texts and not all(s in texts[0] for s in ("3 dòng", "80 token", "ngắn hơn input", "Không giải thích")):
-                errors.append(f"{label}: summary must request a short interface-only response")
+            if extracted and texts and not all(s in texts[0] for s in ("chữ ký", "I/O", "cấu hình", "trạng thái", "ràng buộc", "logic")):
+                errors.append(f"{label}: summary must retain interfaces, configuration, state, constraints and main logic")
         elif values["Summary"] != "no" or summary.strip() or field_values(meta, "Summary budget"):
             errors.append(f"{label}: unexpected summary or invalid Summary field")
-        if budgets[identifier][0] and len(prompt + "\n".join(excerpts)) > budgets[identifier][0] * 3:
+        generation_input = prompt + "\n".join(excerpts)
+        if reference_guided and not sources:
+            generation_input += reference_input
+        elif extracted and sources and not reference_guided:
+            generation_input += subsection(block, "Yêu cầu bài toán")
+            # The extraction response will be pasted here; its actual size is unknown.
+        if budgets[identifier][0] and len(generation_input) > budgets[identifier][0] * 3:
             warnings.append(f"{label}: large input; token fit requires real counters and possibly a smaller complete work item")
+        if extracted and sources:
+            extraction_input = extraction + "\n".join(excerpts + related_code) + subsection(block, "Context cần chuẩn bị") + reference_input
+            if len(extraction_input) > budgets.get(identifier + ":constraints", (0, 0))[0] * 3:
+                warnings.append(f"{label}: large extraction input; count tokens and split complete components if needed")
     if seen_groups != list(groups):
         errors.append("Guide: missing, repeated or out-of-order responsibility groups")
     if consumed != summarized:
@@ -558,13 +647,11 @@ def scan_focused_guide(path: Path, variant: str, content: str) -> tuple[list[str
                 if (type(inp) is not int or type(total) is not int or not 0 < inp <= budgets[session][0]
                         or not inp <= total <= 1800 or total >= 2000 or total - inp > budgets[session][1]):
                     raise ValueError("usage exceeds the declared allowance")
-                if session.endswith(":summary") and total - inp >= inp:
-                    raise ValueError("summary output must be smaller than actual input")
                 measured.add(session)
             except (KeyError, TypeError, ValueError) as exc:
                 errors.append(f"Invalid Measurement: {exc}")
         if measured != set(budgets):
-            errors.append("Measured verification requires every generation and summary session")
+            errors.append("Measured verification requires every generation, extraction and summary session")
     return errors, warnings
 
 

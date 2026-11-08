@@ -5,6 +5,7 @@ Only local Markdown and Python ASTs are read. Token allowances are not measureme
 from __future__ import annotations
 
 import ast
+import copy
 import json
 from pathlib import Path
 import re
@@ -21,11 +22,18 @@ TITLES = {
     "hyperparameters": "Siêu tham số",
     "training": "Loss, optimizer và training loop",
 }
-SUMMARY_BUDGET = "input=1400; output=80; reserve=200"
+SUMMARY_BUDGET = "input=1100; output=500; reserve=200"
+CONSTRAINT_BUDGET = SUMMARY_BUDGET
+CONSTRAINT_PROMPT = (
+    "Đọc code hiện tại và nguồn tham khảo theo ý tưởng:\n{idea}\n\n"
+    "Rút ra tên/chữ ký cần giữ và các ràng buộc cần tuân thủ.\n"
+    "Đánh dấu điều chưa rõ hoặc lỗi nghi ngờ. Liệt kê ngắn gọn, chưa sửa code."
+)
+CONSTRAINT_SLOT = "[Dán kết quả phân tích.]"
 SUMMARY_PROMPT = (
-    "Tóm tắt code hiện tại trong tối đa 3 dòng, mục tiêu không quá 80 token và ngắn hơn input. "
-    "Chỉ ghi chữ ký cần gọi, I/O (shape/mask nếu có), cấu hình và trạng thái mà bước sau cần. "
-    "Không giải thích chức năng, không nhắc lại code; không đoán giá trị thiếu."
+    "Tóm tắt code thật gọn để sinh module tương tự hoặc viết module gọi nó.\n"
+    "Giữ chữ ký, I/O (shape/mask nếu có), cấu hình, trạng thái,\n"
+    "ràng buộc và logic xử lý chính."
 )
 PREPROCESS_NAMES = {
     "normalize_text", "clean_text", "words_with_offsets", "context_tokens", "question_words",
@@ -48,20 +56,6 @@ def clean(value):
     return re.sub(r"\s+", " ", value).strip()
 
 
-def sentences(value, limit):
-    """Keep whole sentences/clauses, without slicing source code or identifiers."""
-    parts = re.split(r"(?<=[.!?;])\s+", clean(value))
-    kept = []
-    for part in parts:
-        if re.search(r"fingerprint|đã đo|lần chạy|tốt nhất|32 GB|hai notebook", part, re.I):
-            continue
-        if len(" ".join(kept + [part])) > limit:
-            if not kept:
-                clauses = re.split(r"; |, (?=không|giữ|chỉ|toàn bộ)", part)
-                kept = [clauses[0]]
-            break
-        kept.append(part)
-    return " ".join(kept)
 
 
 def inspect_notebook(path):
@@ -101,14 +95,17 @@ def inspect_notebook(path):
 
 
 def signature(node):
-    args = node.args
-    names = [a.arg for a in args.posonlyargs + args.args if a.arg not in ("self", "cls")]
-    if args.vararg:
-        names.append("*" + args.vararg.arg)
-    names.extend(a.arg for a in args.kwonlyargs)
-    if args.kwarg:
-        names.append("**" + args.kwarg.arg)
-    return node.name + "(" + ", ".join(names) + ")"
+    args = copy.deepcopy(node.args)
+    positional = args.posonlyargs or args.args
+    if positional and positional[0].arg in ("self", "cls"):
+        # Drop only the bound receiver; retain defaults, annotations and / or *.
+        if len(args.defaults) == len(args.posonlyargs) + len(args.args):
+            args.defaults.pop(0)
+        positional.pop(0)
+    result = node.name + "(" + ast.unparse(args) + ")"
+    if node.returns:
+        result += " -> " + ast.unparse(node.returns)
+    return result
 
 
 def interface(nodes):
@@ -132,89 +129,10 @@ def interface(nodes):
     return "; ".join(result)
 
 
-def report_sections(directory):
-    path = directory / "huong_giai_quyet.md"
-    if not path.exists():
-        return {}
-    sections = {}
-    for match in re.finditer(r"^##\s+(\d+)[.)]?[^\n]*\n(.*?)(?=^## |\Z)",
-                             path.read_text(encoding="utf-8"), re.M | re.S):
-        paragraphs = [p.strip() for p in match[2].split("\n\n") if p.strip()]
-        # Exclude generic definitions, tables, execution history and cross-variant prose.
-        paragraphs = [p for p in paragraphs if not p.startswith(("|", "Nguồn đối chiếu:", "Token là", "TF-IDF biến"))
-                      and not re.search(r"fingerprint|^ID nguồn|^Đây là|^Các thống kê|^\*\*Bằng chứng", p)]
-        sections[int(match[1])] = " ".join(paragraphs)
-    return sections
 
 
-def method_brief(sections, nodes):
-    details = re.split(r"(?<=[.!?])\s+", clean(sections.get(4, "")))
-    details = [p for p in details if not re.search(r"ví dụ|chẳng hạn|để hiểu|nghĩa là|là bộ giải mã", p, re.I)]
-    model = sentences(" ".join(details), 470)
-    if model:
-        return model
-    # Notebook-only inputs can identify a method without a report. Do not reuse old
-    # guide wording: doing so makes refreshes depend on their own previous output.
-    calls = {ast.unparse(n.func).split(".")[-1] for u in nodes for n in ast.walk(u["node"]) if isinstance(n, ast.Call)}
-    if "LinearSVC" in calls:
-        return "TF-IDF từ/ký tự và LinearSVC; chỉ fit biểu diễn trên train, chọn điều chuẩn bằng validation."
-    classes = [u["code"] for u in nodes if isinstance(u["node"], ast.ClassDef)
-               and any(isinstance(n, ast.FunctionDef) and n.name == "forward" for n in u["node"].body)]
-    components = sorted(calls & {"LSTM", "GRU", "Conv1d", "Conv2d", "Transformer", "TransformerEncoder", "MultiheadAttention"})
-    if classes and components:
-        return "Kết hợp " + ", ".join(components) + " theo luồng encoder → head của notebook tối ưu; khởi tạo và nối đúng I/O."
-    functions = [u["node"] for u in nodes if isinstance(u["node"], ast.FunctionDef)]
-    if functions:
-        return "Triển khai phép biến đổi " + signature(functions[0]) + ": " + clean(ast.unparse(functions[0].body[-1])) + "."
-    raise ValueError("Cannot identify a target method; provide a report or an explicit task model")
 
 
-def profile(directory, optimized, constants):
-    sections = report_sections(directory)
-    source = constants.get("SOURCE", "")
-    if isinstance(source, dict):
-        source = {k: v for k, v in source.items() if k not in ("row", "url", "task")}
-    source = json.dumps(source, ensure_ascii=False, separators=(",", ":")) if source else ""
-    metric = str(constants.get("PRIMARY_METRIC", "metric đã khai báo trong notebook"))
-    if metric.lower() in ("cer", "wer", "loss", "perplexity"):
-        metric += " (càng thấp càng tốt)"
-    data = sentences(sections.get(2, ""), 750)
-    policy = constants.get("TASK_PRETRAINING_POLICY", constants.get("PRETRAINING_POLICY", "scratch"))
-    components = constants.get("TASK_PRETRAINED_COMPONENTS", constants.get("PRETRAINED_COMPONENTS", []))
-    pretrained = "Không dùng pretrained cho tokenizer/embedding/model tác vụ."
-    if policy == "image_components":
-        allowed = [str(c.get("model_id", "")) + "/" + str(c.get("revision", "")) for c in components]
-        pretrained = "Chỉ cho pretrained backbone ảnh " + ", ".join(allowed) + "; phần ngôn ngữ/head học mới."
-    calls = {ast.unparse(n.func).split(".")[-1] for u in optimized for n in ast.walk(u["node"]) if isinstance(n, ast.Call)}
-    losses = []
-    if calls & {"CTCLoss", "ctc_loss"}:
-        losses.append("CTC với blank của tokenizer; kiểm độ dài feature/target và nhãn lặp, không che mẫu lỗi bằng zero_infinity")
-    if calls & {"cross_entropy", "CrossEntropyLoss"}:
-        losses.append("cross-entropy theo head/target của bài; chỉ bỏ padding khi target có padding")
-    if calls & {"binary_cross_entropy_with_logits", "BCEWithLogitsLoss"}:
-        losses.append("BCE-with-logits cho soft/multi-label target")
-    if calls & {"nll_loss", "NLLLoss"}:
-        losses.append("NLL trên log-probabilities đã chuẩn hóa")
-    if any(isinstance(u["node"], ast.FunctionDef) and u["node"].name == "compute_loss"
-           and any(isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "gather"
-                   for n in ast.walk(u["node"])) for u in optimized):
-        losses.append("token NLL từ log-probabilities, target dịch một bước; bỏ PAD, smoothing theo cấu hình")
-    if any("CRF" in getattr(u["node"], "name", "") for u in optimized):
-        losses.append("CRF NLL với transition/mask hợp lệ; decode Viterbi")
-    special = {k: v for k, v in constants.items() if k in ("PAD", "UNK", "BOS", "EOS", "BLANK", "IGNORE_INDEX")
-               or (k.endswith(("_ID", "_IDS")) and isinstance(v, (int, list, dict)))}
-    split = {k: constants[k] for k in ("SEED", "VAL_FRACTION", "VALIDATION_FRACTION", "INFERENCE_SPLIT") if k in constants}
-    return {
-        "method": method_brief(sections, optimized),
-        "preprocessing": sentences(sections.get(3, ""), 800) or "Fit biểu diễn chỉ trên train; giữ đúng căn chỉnh input/target và mask.",
-        "source": source,
-        "data": data,
-        "metric": metric,
-        "policy": pretrained,
-        "loss": "; ".join(losses),
-        "special": json.dumps(special, ensure_ascii=False, separators=(",", ":")) if special else "",
-        "split": json.dumps(split, ensure_ascii=False, separators=(",", ":")) if split else "",
-    }
 
 
 def role(unit):
@@ -278,6 +196,146 @@ def coalesce(units, directory, name):
     return merged
 
 
+
+
+
+
+def defined_names(unit):
+    node = unit["node"]
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return {node.name}
+    if isinstance(node, (ast.Assign, ast.AnnAssign)):
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        return {n.id for t in targets for n in ast.walk(t) if isinstance(n, ast.Name)}
+    return set()
+
+
+def related_sources(units, sources, limit=1450):
+    """Attach small complete providers/callers; list larger neighbors for the learner."""
+    selected = {(u["cell"], u["start"], u["stop"]) for u in sources}
+    names = set().union(*(defined_names(u) for u in sources))
+    loads = {n.id for u in sources for n in ast.walk(u["node"])
+             if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
+    related, extra, size = [], [], 0
+    for unit in units:
+        if (unit["cell"], unit["start"], unit["stop"]) in selected:
+            continue
+        used = {n.id for n in ast.walk(unit["node"])
+                if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
+        if not (defined_names(unit) & loads or used & names):
+            continue
+        if size + len(unit["code"]) <= limit:
+            related.append(unit)
+            size += len(unit["code"])
+        else:
+            node = unit["node"]
+            extra.append(signature(node) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                         else node.name if isinstance(node, ast.ClassDef)
+                         else f"cell {unit['cell']}, dòng {unit['start']}–{unit['stop']}")
+    return related, extra
+
+
+def report_excerpts(directory, sections):
+    """Return exact, complete report paragraphs with reproducible line references."""
+    path = directory / "huong_giai_quyet.md"
+    if not path.exists():
+        return []
+    lines = path.read_text(encoding="utf-8").splitlines()
+    result, section, start = [], None, None
+    for index in range(len(lines) + 1):
+        line = lines[index] if index < len(lines) else ""
+        heading = re.match(r"^##\s+(\d+)[.)]?\s", line)
+        boundary = not line.strip() or heading or line.startswith("## ")
+        if start is not None and boundary:
+            excerpt = "\n".join(lines[start:index])
+            # Data alternatives, generic definitions and execution-history notes
+            # are not the selected implementation's description.
+            skip = re.match(r"(?:Siêu tham số là|Đây là lựa chọn thiết kế|Các thống kê|Nguồn đối chiếu:)", excerpt)
+            if section in sections and not skip and not excerpt.startswith("|"):
+                result.append({"ref": f"huong_giai_quyet.md#lines={start + 1}-{index}", "text": excerpt})
+            start = None
+        if heading:
+            section = int(heading[1])
+        elif line.startswith("## "):
+            section = None
+        elif line.strip() and start is None:
+            start = index
+    return result
+
+
+def reference_material(directory, step, optimized):
+    sections = {"data": (1, 2), "preprocessing": (3,), "model": (4,),
+                "hyperparameters": (5,), "training": (4, 5)}[step["group"]]
+    reports = report_excerpts(directory, sections)
+    code = []
+    fallback = not reports or sum(len(p["text"]) for p in reports) < 100
+    if fallback:
+        code.extend(step["targets"])
+        if not code:
+            roles = {"data": set(), "preprocessing": {"representation", "batch"},
+                     "model": {"model"}, "hyperparameters": {"hyperparameters"}, "training": set()}[step["group"]]
+            code.extend(u for u in optimized if role(u) in roles)
+            if step["group"] == "training":
+                code.extend(u for u in optimized if getattr(u["node"], "name", "") in
+                            {"compute_loss", "train_epoch", "fit", "fit_model"}
+                            or any(w in u["section"].lower() for w in ("huấn luyện", "training", "loss")))
+            elif step["group"] == "data":
+                code.extend(u for u in optimized if any(w in u["section"].lower()
+                            for w in ("load", "chia tập", "dữ liệu thô")))
+    if step["group"] == "training" and not re.search(
+            r"loss|NLL|cross.entropy|CTC|CRF|objective|likelihood", " ".join(p["text"] for p in reports), re.I):
+        code.extend(u for u in optimized if getattr(u["node"], "name", "") in
+                    {"compute_loss", "objective", "compute_objective"})
+    substantive = bool((reports and not fallback) or code)
+    # Actual declarations carry version, labels, special IDs and policy without
+    # requiring the learner to transcribe a technical checklist.
+    source_names = {
+        "SOURCE", "DATASET_ID", "HF_REVISION", "DATASET_VERSION", "DATASET_REVISION",
+        "SEED", "VAL_FRACTION", "VALIDATION_FRACTION", "INFERENCE_SPLIT",
+    }
+    metric_names = {"PRIMARY_METRIC", "SELECTION_METRIC", "DIRECTION"}
+    policy_names = {"PRETRAINING_POLICY", "PRETRAINED_COMPONENTS", "TASK_PRETRAINING_POLICY",
+                    "TASK_PRETRAINED_COMPONENTS", "ALLOW_PRETRAINED_EVALUATORS"}
+    label_names = {"LABELS", "LABEL_NAMES", "ENTITY_TYPES", "SPECIALS", "PAD", "UNK", "BOS", "EOS", "BLANK", "IGNORE_INDEX"}
+    metadata_names = set()
+    if step["group"] == "data" or not step["deps"]:
+        metadata_names |= source_names | metric_names | policy_names
+    if step["group"] in ("model", "training"):
+        metadata_names |= policy_names
+    if step["group"] in ("hyperparameters", "training"):
+        metadata_names |= metric_names
+    if step["group"] in ("data", "preprocessing", "model", "training"):
+        metadata_names |= label_names
+    if step["group"] == "hyperparameters":
+        code.extend(u for u in optimized if role(u) == "hyperparameters")
+    for unit in optimized:
+        names = defined_names(unit)
+        if isinstance(unit["node"], (ast.Assign, ast.AnnAssign)) and any(
+                n in metadata_names or (step["group"] != "hyperparameters" and
+                n.endswith(("_ID", "_IDS")) and not n.startswith(("DATASET_", "TASK_"))) for n in names):
+            code.append(unit)
+    unique = {(u["cell"], u["start"], u["stop"]): u for u in code}
+    code = coalesce(sorted(unique.values(), key=lambda u: (u["cell"], u["start"])), directory, "baseline.ipynb")
+    return reports, code, not substantive
+
+
+def work_idea(step):
+    group = step["group"]
+    if group == "data":
+        return "Load dữ liệu và chia tập theo mô tả bài toán."
+    if group == "preprocessing":
+        return ("Nối Dataset, batch và padding với biểu diễn đã chốt."
+                if "Dataset và batch" in step["title"] else
+                "Nâng cấp biểu diễn và tiền xử lí theo phương pháp tham khảo.")
+    if group == "model":
+        if step["title"] != "Model và giao diện sử dụng":
+            return "Viết " + step["title"] + " hoàn chỉnh để mô hình chính sử dụng."
+        return "Triển khai mô hình theo nguồn tham khảo và context hiện có."
+    if group == "hyperparameters":
+        return "Chọn siêu tham số phù hợp với phương pháp và dữ liệu tham khảo."
+    return "Bổ sung huấn luyện cho mô hình và dữ liệu đã có."
+
+
 def stages(variant, optimized, basic):
     steps = []
 
@@ -302,12 +360,10 @@ def stages(variant, optimized, basic):
         if not target and not original:
             continue
         for index, bundle in enumerate(bundles, 1):
-            names = ", ".join(getattr(u["node"], "name", "") for u in bundle if getattr(u["node"], "name", ""))
-            goal = ("Cập nhật biểu diễn/căn chỉnh; chỉ fit train, giữ gold/ID, special IDs và mask; giữ trạng thái và API khôi phục biểu diễn."
+            goal = ("Cập nhật biểu diễn và căn chỉnh theo mục tiêu tiền xử lí."
                     if kind == "representation" else
-                    "Tạo Dataset/collate/DataLoader dùng biểu diễn đã chốt; thống nhất tensor, padding, mask và lengths với model; shuffle chỉ train.")
-            if names:
-                goal += " Phạm vi sửa: " + names + "."
+                    "Tạo Dataset, collate và DataLoader dùng biểu diễn đã chốt. "
+                    "Thống nhất tensor, padding, mask và lengths với model; shuffle chỉ train.")
             deps = data + preprocessing[-1:]
             identifier = add("preprocessing", title + (f" — phần việc {index}" if len(bundles) > 1 else ""), goal,
                              bundle, target, deps, ("preprocess_" + str(len(preprocessing) + 1),))
@@ -358,9 +414,8 @@ def stages(variant, optimized, basic):
 
 
 def render(directory: Path, variant: str, old_content=""):
-    optimized, constants = inspect_notebook(directory / "baseline.ipynb")
+    optimized, _ = inspect_notebook(directory / "baseline.ipynb")
     basic, _ = inspect_notebook(directory / "baseline_basic.ipynb") if variant == "basic" else ([], {})
-    facts = profile(directory, optimized, constants)
     stable_interface = interface(basic if variant == "basic" else inspect_notebook(directory / "baseline_hardcore.ipynb")[0]) \
         if (variant == "basic" or (directory / "baseline_hardcore.ipynb").exists()) else ""
     steps = stages(variant, optimized, basic)
@@ -369,21 +424,36 @@ def render(directory: Path, variant: str, old_content=""):
     cells = json.loads((directory / "baseline.ipynb").read_text(encoding="utf-8"))["cells"]
     title = clean(next((text(c).splitlines()[0].lstrip("# ") for c in cells if c["cell_type"] == "markdown" and text(c).strip()), directory.name))
     result = [f"# Prompt {variant}: {title}\n\n<!-- prompt-guide\nFormat: 4\nVariant: {variant}\n"
-              "Model: gemini-3.8-flash\nThinking: low\nToken verification: unverified\nSession target: 1800\nSession limit: 2000\n-->",
+              "Model: gemini-3.8-flash\nThinking: low\nToken verification: unverified\nSession target: 1800\nSession limit: 2000\n"
+              "Constraint workflow: extract-before-edit\nReference workflow: report-first\n-->",
               "Mỗi prompt dùng một chat mới. Gửi prompt cùng code/context được chỉ định; dùng code hiện tại sau khi sửa. "
               "Mục tiêu mỗi phiên 1.800 token, tổng input + output phải dưới 2.000; chưa có đo token thực tế. "
-              "Chỉ tóm tắt ở bước có liên kết dùng tiếp; web không đặt trần output riêng nên giới hạn độ dài tóm tắt là yêu cầu mềm."]
+              "Lượt phân tích dùng Code cần sửa, Code liên quan, Nguồn tham khảo và context. "
+              "Lượt sửa chỉ cần Code cần sửa, kết quả phân tích và context; gửi thêm nguồn khi còn điều chưa rõ. "
+              "Module mới dùng ý tưởng, nguồn tham khảo và context trực tiếp. Tham số trong nguồn là gợi ý để chọn phù hợp. "
+              "Chỉ tóm tắt ở bước có liên kết dùng tiếp; không giới hạn cứng số dòng/token của bản tóm tắt. "
+              "Nếu cả phiên không đủ chỗ, chia theo thành phần hoàn chỉnh."]
     for number, step in enumerate(steps, 1):
         sid, deps, group = step["id"], step["deps"], step["group"]
+        related, extra = related_sources(basic, step["sources"]) if step["sources"] else ([], [])
+        related = coalesce(related, directory, "baseline_basic.ipynb") if related else []
         step["sources"] = coalesce(step["sources"], directory, "baseline_basic.ipynb") if step["sources"] else []
         step["targets"] = coalesce(step["targets"], directory, "baseline.ipynb") if step["targets"] else []
+        reports, reference_code, missing_reference = reference_material(directory, step, optimized)
         budget = "input=1000; output=600; reserve=200" if step["sources"] else "input=650; output=950; reserve=200"
         metadata = ["ID: " + sid, "Group: " + group, "Kind: code", "Depends: " + (", ".join(deps) or "none"),
-                    "Budget: " + budget, "Summary: " + ("yes" if sid in consumed else "no")]
+                    "Budget: " + budget, "Summary: " + ("yes" if sid in consumed else "no"),
+                    "Constraints: " + ("yes" if step["sources"] else "no")]
+        if step["sources"]:
+            metadata.append("Constraints budget: " + CONSTRAINT_BUDGET)
         if sid in consumed:
             metadata.append("Summary budget: " + SUMMARY_BUDGET)
         metadata += ["Source: " + reference(u) for u in step["sources"]]
+        metadata += ["Related source: " + reference(u) for u in related]
         metadata += ["Target: " + reference(u, "baseline.ipynb") for u in step["targets"]]
+        metadata += ["Reference report: " + item["ref"] for item in reports]
+        metadata += ["Reference code: " + reference(u, "baseline.ipynb") for u in reference_code]
+        metadata.append("Reference missing: " + ("yes" if missing_reference else "no"))
         if step["owns"]:
             metadata.append("Config owns: " + ", ".join(step["owns"]))
         uses = [name for d in deps for name in by_id[d]["owns"]]
@@ -394,36 +464,49 @@ def render(directory: Path, variant: str, old_content=""):
         if deps:
             result.append("### Context cần chuẩn bị\n\n" + "\n".join(
                 f"- [{by_id[d]['title']}](#context-{d})" for d in deps))
-        prompt = step["goal"]
-        if group == "data":
-            prompt += "\nNguồn/schema/split: " + facts["source"] + ". " + facts["data"]
-            if facts["split"]:
-                prompt += "\nThiết lập split cần giữ: " + facts["split"] + "."
-        elif group == "preprocessing":
-            prompt += "\nÝ tưởng tiền xử lí: " + facts["preprocessing"]
-            if facts["special"]:
-                prompt += "\nSpecial IDs cố định: " + facts["special"] + "."
-        elif group == "model":
-            prompt += "\nÝ tưởng mô hình: " + facts["method"] + " " + facts["policy"]
-        else:
-            prompt += "\nPhương pháp: " + sentences(facts["method"], 320) + " Metric: " + facts["metric"] + "."
-            if group == "training" and facts["loss"]:
-                prompt += "\nObjective cần nối: " + facts["loss"] + "."
-        if group == "preprocessing" and not deps and facts["source"]:
-            prompt += "\nNguồn: " + facts["source"] + "."
         if stable_interface and group == "model" and not step["sources"]:
-            prompt += "\nAPI hiện có: " + stable_interface + "."
-        if group in ("hyperparameters", "training"):
-            prompt += " Neural: precision thường, nhắm GPU 32 GB; không AMP, dò VRAM hoặc tự đổi batch."
-        prompt += "\nChỉ trả code hoàn chỉnh kèm imports và comment chỉ chỗ thay/thêm. Tự chọn tham số điều chỉnh được; giữ nhãn/ID và ràng buộc bài, không ép giống các giá trị tham khảo."
+            result.append("### Code liên quan\n\nGiao diện hiện có để nối với module mới: " + stable_interface + ".")
+        idea = work_idea(step)
+        source_parts = [f'### Nguồn tham khảo\n\n<a id="references-{sid}"></a>\n\n'
+                        "Đính kèm các đoạn nguồn dưới đây cho lượt phân tích hoặc tạo module mới; chatbot tự rút phương pháp và ràng buộc. "
+                        "Tên/chữ ký cần giữ lấy từ code hiện tại; code mẫu chỉ minh họa phương pháp."]
+        for item in reports:
+            fence = "`" * max(3, max((len(m[0]) + 1 for m in re.finditer(r"`+", item["text"])), default=3))
+            source_parts.append("Trích báo cáo:\n\n" + fence + "markdown\n" + item["text"] + "\n" + fence)
+        if reference_code:
+            source_parts.append("Code/cấu hình tham khảo trích từ notebook tối ưu:\n\n" + "\n\n".join(
+                "```python\n" + u["code"] + "\n```" for u in reference_code))
+        if missing_reference:
+            source_parts.append("Nguồn hiện có chưa mô tả đủ phần việc này; đánh dấu điều chưa rõ, không tự đoán phần thiếu.")
+        result.append("\n\n".join(source_parts))
+        if step["sources"]:
+            result.append(f'### Prompt trích ràng buộc\n\n<a id="constraints-{sid}"></a>\n\n'
+                          f'Gửi cùng [nguồn tham khảo](#references-{sid}), code hiện tại và context phụ thuộc.\n\n```text\n'
+                          + CONSTRAINT_PROMPT.format(idea=idea) + "\n```")
+            prompt = "Sửa phần “Code cần sửa” theo ý tưởng:\n" + idea
+            prompt += "\n\nDựa trên phân tích:\n" + CONSTRAINT_SLOT
+            prompt += "\n\nGiữ tương thích với code hiện tại; báo trước nếu cần thay đổi thêm."
+        else:
+            prompt = "Tạo module theo ý tưởng:\n" + idea
+            prompt += "\n\nDùng nguồn tham khảo và context đính kèm; giữ tương thích với code hiện tại. Đánh dấu điều chưa rõ."
         if deps:
             prompt += "\n\n" + "\n\n".join(f"Context {d} — {by_id[d]['title']}:\n[Dán tóm tắt {d}]" for d in deps)
-        result.append("### Prompt tạo hoặc sửa module\n\n```text\n" + prompt + "\n```")
+        handoff = (f"Dán kết quả [phân tích code và nguồn](#constraints-{sid}) vào ô bên dưới; gửi cùng Code cần sửa và context.\n\n"
+                   if step["sources"] else f"Gửi cùng [nguồn tham khảo](#references-{sid}) và context ở trên.\n\n")
+        result.append("### Prompt tạo hoặc sửa module\n\n" + handoff + "```text\n" + prompt + "\n```")
         if step["sources"]:
-            result.append("### Code gửi kèm\n\nĐính kèm các đoạn dưới đây; thay bằng bản hiện tại nếu đã sửa:\n\n" +
+            result.append("### Code cần sửa\n\nĐính kèm các đoạn dưới đây; thay bằng bản hiện tại nếu đã sửa:\n\n" +
                           "\n\n".join("```python\n" + u["code"] + "\n```" for u in step["sources"]))
+            neighbors = "Đính kèm cho lượt phân tích cùng nguồn tham khảo và context ở trên. Các đoạn dưới chỉ để đối chiếu, không thuộc phạm vi sửa. Lượt sửa dùng kết quả phân tích; gửi thêm code đối chiếu khi còn điều chưa rõ."
+            if related:
+                neighbors += "\n\n" + "\n\n".join("```python\n" + u["code"] + "\n```" for u in related)
+            if extra:
+                neighbors += "\n\nĐối chiếu thêm code hiện tại của: " + "; ".join(dict.fromkeys(extra)) + ". Gửi thêm phần liên quan nếu cần, chia theo thành phần hoàn chỉnh khi vượt ngân sách phiên."
+            if stable_interface:
+                neighbors += "\n\nGiao diện dùng trong notebook: " + stable_interface + "."
+            result.append("### Code liên quan\n\n" + neighbors)
         elif variant == "basic":
-            result.append("### Code gửi kèm\n\nPhần bổ sung mới; dùng giao diện hiện có và context ở trên.")
+            result.append("### Code cần sửa\n\nPhần bổ sung mới; dùng giao diện hiện có và context ở trên.")
         if sid in consumed:
             result.append(f'### Tóm tắt context để dùng tiếp\n\n<a id="context-{sid}"></a>\n\n```text\n'
                           + SUMMARY_PROMPT + "\n```\n\n```python\n# Dán code hiện tại vừa tạo/sửa của phần việc này.\n```")
